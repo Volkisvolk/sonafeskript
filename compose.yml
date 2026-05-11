@@ -11,6 +11,7 @@ x-shared-env: &shared-env
   DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
   REDIS_URL: redis://valkey:6379
   APP_SECRET: ${APP_SECRET}
+  ADMIN_LOGIN_TOKEN: ${ADMIN_LOGIN_TOKEN}
 
 x-app: &app
   restart: unless-stopped
@@ -74,7 +75,7 @@ services:
     image: ghcr.io/valentinkolb/cloud-app-accounts:latest
 
   # ── Your app (built from this repo's Dockerfile) ───────────────────
-  app-expeditions:
+  app-raffle:
     <<: *app
     build: .
 

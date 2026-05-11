@@ -1,51 +1,93 @@
 import { defineApp } from "@valentinkolb/cloud";
 
-/**
- * App declaration for the expeditions demo / template app.
- *
- * `defineApp()` returns an object that contains:
- *   - `start({ routes, lifecycle, ... })` → call from index.ts to bootstrap
- *   - `ssr` — an SSR helper page handlers wrap themselves in
- *   - `plugin` — the Bun plugin used in `preload.ts` to discover islands
- *
- * Everything you put here is platform-discoverable: nav links, widget
- * endpoints and admin section all show up automatically once this app
- * registers itself in the Redis app registry at startup.
- *
- * To turn this template into a real app: rename `id`, `name`, `icon`,
- * `description`, `basePath`, `baseUrl`, `adminHref`, and the widget paths.
- */
 export const app = defineApp({
-  id: "expeditions",
-  name: "Expeditions",
-  icon: "ti ti-map-2",
-  description: "Plan a journey, tick off waypoints, get a high-five email when you reach the summit.",
-  basePath: "/app/expeditions",
-  // baseUrl = the docker-internal URL the gateway proxies to. Container name
-  // must match the service in compose.dev.yml.
-  baseUrl: "http://app-expeditions:3000",
-  adminHref: "/admin/expeditions",
+  id: "raffle",
+  name: "Verlosung",
+  icon: "ti ti-ticket",
+  description: "Registrierung und Ticketverwaltung für Verlosungen.",
+  basePath: "/app/raffle",
+  baseUrl: "http://app-raffle:3000",
+  adminHref: "/admin/raffle",
   nav: {
-    href: "/app/expeditions",
-    match: "/app/expeditions",
+    href: "/app/raffle",
+    match: "/app/raffle",
     section: "primary",
-    requiresAuth: true,
-    requiresRoles: ["user"],
+    requiresAuth: false,
   },
-  // Widgets are HTTP endpoints the dashboard calls to render a tile. The
-  // `path` is relative to this app's HTTP service (the gateway prefixes it
-  // automatically when forwarding the request).
-  widgets: [{ id: "active", path: "/api/expeditions/widget/active" }],
-  // Opt in to the platform-wide API docs aggregator at /app/api-docs.
-  // Pair with `app.start({ openapi: apiRoutes })` in index.ts —
-  // defineApp generates the spec from the api router at boot, mounts it
-  // here (public, before any auth middleware), and advertises the URL
-  // via the registry. Drop both fields if your app has no API surface.
-  openapi: "/api/expeditions/openapi.json",
-  // Top-level URL prefixes the gateway routes to this container. Standard
-  // four-prefix scheme: api covers widget + CRUD, app + admin host the SSR
-  // pages, public serves the per-app CSS bundle.
-  routes: ["/api/expeditions", "/app/expeditions", "/admin/expeditions", "/public/expeditions"],
+  widgets: [{ id: "stats", path: "/api/raffle/widget/stats" }],
+  openapi: "/api/raffle/openapi.json",
+  routes: ["/api/raffle", "/app/raffle", "/admin/raffle", "/public/raffle"],
+  settings: {
+    "raffle.ticket_contingent": {
+      kind: "number",
+      label: "Kartenkontingent",
+      default: 100,
+      description:
+        "Gesamtanzahl der verfügbaren Karten für die Verlosung. Kann bis zur Verlosung angepasst werden.",
+    },
+    "raffle.max_group_size": {
+      kind: "number",
+      label: "Maximale Gruppengröße",
+      default: 4,
+      description: "Wie viele Personen maximal in einer Gruppe sein dürfen.",
+    },
+    "raffle.allowed_domains": {
+      kind: "string",
+      label: "Erlaubte E-Mail-Domains",
+      default: "",
+      description:
+        'Kommagetrennte Liste erlaubter Domains (z.B. "uni.de,firma.com"). Leer lassen = alle Domains erlaubt.',
+    },
+    "raffle.reply_to_email": {
+      kind: "string",
+      label: "Reply-To E-Mail-Adresse",
+      default: "",
+      description:
+        "Antwort-Adresse für alle Benachrichtigungs-Mails. Wenn Teilnehmer antworten, landet die Mail hier.",
+    },
+    "raffle.win_email_subject": {
+      kind: "string",
+      label: "Gewinn-Mail: Betreff",
+      default: "Herzlichen Glückwunsch – Du hast gewonnen!",
+      description: "Betreffzeile der Gewinn-Benachrichtigung.",
+    },
+    "raffle.win_email_body": {
+      kind: "string",
+      label: "Gewinn-Mail: Text",
+      default:
+        "Hallo {{name}},\n\nherzlichen Glückwunsch! Du hast bei unserer Verlosung {{won_tickets}} Karte(n) gewonnen.\n\nDein persönlicher QR-Code für die Abholung befindet sich im Anhang dieser Mail. Bitte zeige ihn beim Abholen vor.\n\nBei Fragen antworte einfach auf diese Mail.\n\nViele Grüße",
+      description:
+        "Text der Gewinn-Mail. Platzhalter: {{name}} (Name), {{won_tickets}} (Anzahl gewonnener Karten).",
+    },
+    "raffle.loss_email_subject": {
+      kind: "string",
+      label: "Verlier-Mail: Betreff",
+      default: "Leider kein Glück bei der Verlosung",
+      description: "Betreffzeile der Verlier-Benachrichtigung.",
+    },
+    "raffle.loss_email_body": {
+      kind: "string",
+      label: "Verlier-Mail: Text",
+      default:
+        "Hallo {{name}},\n\nleider haben wir mehr Anmeldungen als Karten erhalten. Bei der Verlosung hattest du diesmal leider kein Glück.\n\nWir hoffen, dich beim nächsten Mal dabei zu haben!\n\nViele Grüße",
+      description: "Text der Verlier-Mail. Platzhalter: {{name}} (Name).",
+    },
+    "raffle.agb_text": {
+      kind: "string",
+      label: "Verlosungs-AGB / Datenschutzhinweis",
+      default:
+        "Mit der Teilnahme erkläre ich mich damit einverstanden, dass meine Daten (Name und E-Mail-Adresse) für die Durchführung der Verlosung gespeichert und verarbeitet werden. Nach Abschluss der Veranstaltung werden die Daten gelöscht.",
+      description:
+        "Dieser Text wird auf der Anmeldeseite angezeigt und muss von Teilnehmern aktiv akzeptiert werden.",
+    },
+    "raffle.banner_url": {
+      kind: "string",
+      label: "Banner-Bild URL",
+      default: "",
+      description:
+        "URL eines Bildes, das oben auf der Verlosungsseite angezeigt wird. Leer lassen für kein Bild.",
+    },
+  },
 });
 
 export const { ssr, plugin } = app;

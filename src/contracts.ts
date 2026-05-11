@@ -1,79 +1,204 @@
 import { z } from "zod";
 
-/**
- * Public contract for the expeditions app — every type returned to the
- * frontend or accepted from the API is declared here as a Zod schema, then
- * inferred into a TypeScript type. Hono's `describeRoute` consumes the same
- * schemas to publish OpenAPI documentation, so contract & docs never drift.
- *
- * UUID validation matches Postgres' broader-than-RFC `uuid` text format
- * (also accepted in spaces / notebooks, kept consistent on purpose).
- */
 const Uuid = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
-// ── Expedition (tenancy entity) ─────────────────────────────────────────────
+// ── Raffle State ─────────────────────────────────────────────────────────────
 
-export const ExpeditionSchema = z.object({
-  id: Uuid.describe("Expedition UUID"),
-  title: z.string().describe("Expedition title"),
-  description: z.string().nullable().describe("Optional description"),
-  icon: z.string().describe("Tabler icon class (e.g. 'ti ti-map-2')"),
-  completedAt: z.string().nullable().describe("Set when all waypoints are done (ISO)"),
-  createdBy: Uuid.nullable().describe("Creator user UUID"),
-  createdAt: z.string().describe("Creation timestamp (ISO)"),
-  updatedAt: z.string().describe("Last update timestamp (ISO)"),
-  // Aggregates loaded with the list / detail view. Cheap to compute in the
-  // same query — saves the frontend a round-trip per expedition.
-  totalWaypoints: z.number().int().describe("Total waypoint count"),
-  doneWaypoints: z.number().int().describe("Number of waypoints already done"),
+export const RaffleStatusSchema = z.enum(["open", "raffled", "finalized"]);
+export type RaffleStatus = z.infer<typeof RaffleStatusSchema>;
+
+// ── Registration ─────────────────────────────────────────────────────────────
+
+export const RegistrationSchema = z.object({
+  id: Uuid.describe("Registrierungs-UUID"),
+  name: z.string().describe("Vollständiger Name"),
+  email: z.string().describe("E-Mail-Adresse"),
+  requestedTickets: z.number().int().describe("Gewünschte Karten (1 oder 2)"),
+  acceptedAgb: z.boolean().describe("AGB akzeptiert"),
+  groupId: Uuid.nullable().describe("Gruppen-UUID oder null"),
+  groupName: z.string().nullable().describe("Gruppenname oder null"),
+  groupInviteCode: z.string().nullable().describe("Einladungscode der Gruppe"),
+  status: z
+    .enum(["pending", "won", "lost"])
+    .describe("Status: ausstehend / gewonnen / verloren"),
+  wonTickets: z.number().int().nullable().describe("Tatsächlich gewonnene Karten"),
+  qrToken: z.string().nullable().describe("Eindeutiger QR-Code-Token"),
+  paidAt: z.string().nullable().describe("Zeitpunkt der Bezahlung (ISO)"),
+  collectedAt: z.string().nullable().describe("Zeitpunkt der Abholung (ISO)"),
+  collectedBy: z.string().nullable().describe("Abgeholt von (E-Mail bei Vollmacht)"),
+  createdAt: z.string().describe("Anmeldezeitpunkt (ISO)"),
 });
-export type Expedition = z.infer<typeof ExpeditionSchema>;
+export type Registration = z.infer<typeof RegistrationSchema>;
 
-export const CreateExpeditionSchema = z.object({
-  title: z.string().min(1).max(120),
-  description: z.string().max(2_000).optional(),
-  icon: z.string().max(50).optional(),
+export const RegisterSchema = z.object({
+  name: z.string().min(1, "Name ist erforderlich").max(200, "Name ist zu lang"),
+  email: z
+    .string()
+    .email("Bitte gib eine gültige E-Mail-Adresse ein")
+    .max(300, "E-Mail-Adresse ist zu lang"),
+  requestedTickets: z
+    .number()
+    .int()
+    .min(1, "Mindestens 1 Karte")
+    .max(2, "Maximal 2 Karten"),
+  acceptedAgb: z.boolean().refine((val) => val === true, {
+    message: "Du musst die Teilnahmebedingungen akzeptieren",
+  }),
+  createGroupName: z.string().min(1).max(100).optional(),
+  joinGroupCode: z.string().optional(),
 });
-export type CreateExpedition = z.infer<typeof CreateExpeditionSchema>;
+export type Register = z.infer<typeof RegisterSchema>;
 
-export const UpdateExpeditionSchema = z.object({
-  title: z.string().min(1).max(120).optional(),
-  description: z.string().max(2_000).nullable().optional(),
-  icon: z.string().max(50).optional(),
+export const UpdateRegistrationSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  email: z.string().email().max(300).optional(),
+  requestedTickets: z.number().int().min(1).max(2).optional(),
 });
-export type UpdateExpedition = z.infer<typeof UpdateExpeditionSchema>;
+export type UpdateRegistration = z.infer<typeof UpdateRegistrationSchema>;
 
-// ── Waypoint (item) ─────────────────────────────────────────────────────────
-
-export const WaypointSchema = z.object({
-  id: Uuid.describe("Waypoint UUID"),
-  expeditionId: Uuid.describe("Parent expedition UUID"),
-  title: z.string().describe("Waypoint title"),
-  position: z.number().int().describe("Order within the expedition"),
-  doneAt: z.string().nullable().describe("ISO timestamp when ticked off, else null"),
-  createdAt: z.string().describe("Creation timestamp (ISO)"),
-  updatedAt: z.string().describe("Last update timestamp (ISO)"),
+export const RegisterResponseSchema = z.object({
+  message: z.string(),
+  registrationId: z.string(),
+  inviteCode: z.string().optional(),
 });
-export type Waypoint = z.infer<typeof WaypointSchema>;
 
-export const CreateWaypointSchema = z.object({
-  title: z.string().min(1).max(200),
+// ── Groups ───────────────────────────────────────────────────────────────────
+
+export const GroupSchema = z.object({
+  id: Uuid,
+  name: z.string(),
+  inviteCode: z.string(),
+  memberCount: z.number().int(),
+  totalRequestedTickets: z.number().int(),
+  createdAt: z.string(),
 });
-export type CreateWaypoint = z.infer<typeof CreateWaypointSchema>;
+export type Group = z.infer<typeof GroupSchema>;
 
-export const SetWaypointDoneSchema = z.object({
-  done: z.boolean().describe("True = mark done, false = mark open again"),
+export const GroupPublicSchema = z.object({
+  id: Uuid,
+  name: z.string(),
+  memberCount: z.number().int(),
+  maxGroupSize: z.number().int(),
 });
-export type SetWaypointDone = z.infer<typeof SetWaypointDoneSchema>;
 
-// ── Standard error / message envelopes ──────────────────────────────────────
+// ── Ticket Events ────────────────────────────────────────────────────────────
+
+export const TicketEventSchema = z.object({
+  id: Uuid,
+  registrationId: Uuid,
+  eventType: z.enum([
+    "paid",
+    "paid_reverted",
+    "collected",
+    "collected_reverted",
+    "collected_by_proxy",
+    "tickets_adjusted",
+    "removed_by_admin",
+  ]),
+  details: z.string().nullable(),
+  performedBy: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type TicketEvent = z.infer<typeof TicketEventSchema>;
+
+// ── External Links ───────────────────────────────────────────────────────────
+
+export const ExternalLinkSchema = z.object({
+  id: Uuid,
+  label: z.string(),
+  url: z.string(),
+  sortOrder: z.number().int(),
+});
+export type ExternalLink = z.infer<typeof ExternalLinkSchema>;
+
+export const CreateLinkSchema = z.object({
+  label: z.string().min(1, "Bezeichnung ist erforderlich").max(100),
+  url: z.string().url("Bitte gib eine gültige URL ein"),
+  sortOrder: z.number().int().optional(),
+});
+export type CreateLink = z.infer<typeof CreateLinkSchema>;
+
+export const UpdateLinkSchema = z.object({
+  label: z.string().min(1).max(100).optional(),
+  url: z.string().url().optional(),
+  sortOrder: z.number().int().optional(),
+});
+export type UpdateLink = z.infer<typeof UpdateLinkSchema>;
+
+// ── Raffle Item (Multi-Raffle) ────────────────────────────────────────────────
+
+export const RaffleItemSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  status: RaffleStatusSchema,
+  ticketContingent: z.number(),
+  registrationCount: z.number(),
+  createdAt: z.string(),
+});
+export type RaffleItem = z.infer<typeof RaffleItemSchema>;
+
+export const CreateRaffleSchema = z.object({
+  name: z.string().min(1, "Name ist erforderlich"),
+  description: z.string().optional(),
+  ticketContingent: z.number().int().positive().default(100),
+});
+export type CreateRaffle = z.infer<typeof CreateRaffleSchema>;
+
+// ── Admin Actions ────────────────────────────────────────────────────────────
+
+export const AdjustTicketsSchema = z.object({
+  wonTickets: z.number().int().min(1, "Mindestens 1 Karte").max(10),
+});
+export type AdjustTickets = z.infer<typeof AdjustTicketsSchema>;
+
+export const ProxyCollectSchema = z.object({
+  collectedByEmail: z
+    .string()
+    .email("Bitte gib eine gültige E-Mail-Adresse ein"),
+});
+export type ProxyCollect = z.infer<typeof ProxyCollectSchema>;
+
+export const RemoveWithReasonSchema = z.object({
+  reason: z.string().min(1, "Bitte gib einen Grund an").max(500),
+  sendEmail: z.boolean().optional().default(false),
+});
+export type RemoveWithReason = z.infer<typeof RemoveWithReasonSchema>;
+
+// ── Public Stats ─────────────────────────────────────────────────────────────
+
+export const RaffleStatsSchema = z.object({
+  status: RaffleStatusSchema,
+  ticketContingent: z.number().int(),
+  totalRequestedTickets: z.number().int(),
+  totalRegistrations: z.number().int(),
+  totalCollected: z.number().int(),
+});
+export type RaffleStats = z.infer<typeof RaffleStatsSchema>;
+
+// ── Similar Name Pair (fraud filter) ─────────────────────────────────────────
+
+export const SimilarNamePairSchema = z.object({
+  a: z.object({ id: Uuid, name: z.string(), email: z.string() }),
+  b: z.object({ id: Uuid, name: z.string(), email: z.string() }),
+  similarity: z.number(),
+});
+export type SimilarNamePair = z.infer<typeof SimilarNamePairSchema>;
+
+// ── Admin Registration (includes events) ─────────────────────────────────────
+
+export const AdminRegistrationSchema = RegistrationSchema.extend({
+  ticketEvents: z.array(TicketEventSchema).optional(),
+});
+export type AdminRegistration = z.infer<typeof AdminRegistrationSchema>;
+
+// ── Standard envelopes ───────────────────────────────────────────────────────
 
 export const ErrorResponseSchema = z.object({
   error: z.boolean(),
   message: z.string(),
-  code: z.string().optional(),
 });
 
 export const MessageResponseSchema = z.object({

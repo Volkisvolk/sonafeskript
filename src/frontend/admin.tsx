@@ -1,136 +1,79 @@
 import { ssr } from "../config";
 import { type AuthContext } from "@valentinkolb/cloud/server";
 import { AdminLayout } from "@valentinkolb/cloud/ssr";
-import { StatCell, Pagination } from "@valentinkolb/cloud/ui";
-import { SearchBar } from "@valentinkolb/cloud/ssr/islands";
-import { expeditionsService } from "@/service";
-import AdminExpeditionActions from "./_components/AdminExpeditionActions.island";
+import { raffleService } from "@/service";
+import AdminCreateRaffle from "./AdminCreateRaffle.island";
 
-const PER_PAGE = 50;
+const STATUS_LABEL: Record<string, string> = {
+  open: "Offen",
+  raffled: "Verlost",
+  finalized: "Abgeschlossen",
+};
 
-/**
- * Admin page for the expeditions app — listed under /admin/expeditions.
- *
- * Sysadmins see every expedition regardless of access. The page provides:
- *   - Stat cards (total / completed / orphaned)
- *   - Searchable table
- *   - A per-row dropdown that surfaces the destructive admin actions
- *     (re-using the same APIs the detail page uses, just with the global
- *     admin override).
- *
- * The summary numbers come from a single SQL aggregate over the filtered
- * set, NOT the visible page — so the cards stay accurate while paginating.
- */
+const STATUS_CLASS: Record<string, string> = {
+  open: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  raffled: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
+  finalized: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+};
+
 export default ssr<AuthContext>(async (c) => {
-  const search = (c.req.query("search") ?? "").trim();
-  const pageRaw = Number.parseInt(c.req.query("page") ?? "1", 10);
-  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-
-  const [expeditions, summary] = await Promise.all([
-    expeditionsService.expedition.admin.list({
-      pagination: { page, perPage: PER_PAGE },
-      filter: { query: search || undefined },
-    }),
-    expeditionsService.expedition.admin.summary({ filter: { query: search || undefined } }),
-  ]);
-
-  const totalPages = Math.ceil(expeditions.total / expeditions.perPage);
-  const baseUrl = search
-    ? `/admin/expeditions?search=${encodeURIComponent(search)}&page=`
-    : "/admin/expeditions?page=";
+  const raffles = await raffleService.raffles.list();
 
   return () => (
-    <AdminLayout c={c} title="Expeditions" stretch>
+    <AdminLayout c={c} title="Verlosungen" stretch>
       <div class="flex-1 min-h-0 overflow-y-auto">
-        <div class="flex flex-col gap-2">
-          <h1 class="text-base font-semibold text-primary">Expeditions</h1>
+        <div class="flex flex-col gap-3">
 
-          {/* Stat cards. `valueClass` colours the orphaned cell red when
-              non-zero so it pops as something needing attention. */}
-          <div class="paper overflow-hidden">
-            <div class="grid grid-cols-3 gap-px p-px bg-zinc-100 dark:bg-zinc-800">
-              <StatCell
-                label="Expeditions"
-                value={expeditions.total}
-                sub={search ? "filtered" : "total"}
-                accent={{ tone: "blue", icon: "ti ti-map-2" }}
-              />
-              <StatCell
-                label="Completed"
-                value={summary.completed}
-                sub={summary.total === 0 ? "—" : `${Math.round((summary.completed / Math.max(summary.total, 1)) * 100)}%`}
-                accent={{ tone: "emerald", icon: "ti ti-flag-check" }}
-              />
-              <StatCell
-                label="Orphaned"
-                value={summary.orphaned}
-                sub={summary.orphaned > 0 ? "no access entries" : "all reachable"}
-                valueClass={summary.orphaned > 0 ? "text-red-500" : "text-primary"}
-                accent={
-                  summary.orphaned > 0
-                    ? { tone: "red", icon: "ti ti-alert-circle" }
-                    : undefined
-                }
-              />
-            </div>
+          {/* ── Überschrift ───────────────────────────────────────────────── */}
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h1 class="text-base font-semibold text-primary">Verlosungsverwaltung</h1>
+            <span class="text-xs text-dimmed">{raffles.length} Verlosung{raffles.length !== 1 ? "en" : ""}</span>
           </div>
 
-          <SearchBar
-            action="/admin/expeditions"
-            value={search}
-            placeholder="Search expeditions by title..."
-            ariaLabel="Search expeditions"
-          />
+          {/* ── Neue Verlosung erstellen ───────────────────────────────────── */}
+          <AdminCreateRaffle />
 
-          {expeditions.items.length > 0 ? (
+          {/* ── Verlosungsliste ────────────────────────────────────────────── */}
+          {raffles.length > 0 ? (
             <section class="paper overflow-hidden">
               <div class="overflow-x-auto">
                 <table class="w-full text-xs">
                   <thead>
                     <tr class="border-b border-zinc-100 dark:border-zinc-800">
-                      <th class="px-3 py-2 text-left font-medium text-dimmed">Expedition</th>
-                      <th class="px-3 py-2 text-left font-medium text-dimmed">Progress</th>
+                      <th class="px-3 py-2 text-left font-medium text-dimmed">Name</th>
                       <th class="px-3 py-2 text-left font-medium text-dimmed">Status</th>
-                      <th class="px-3 py-2 text-left font-medium text-dimmed">Access</th>
-                      <th class="w-px px-3 py-2 text-right font-medium text-dimmed">
-                        <span class="sr-only">Actions</span>
-                        <i class="ti ti-settings text-sm" aria-hidden="true" />
-                      </th>
+                      <th class="px-3 py-2 text-center font-medium text-dimmed">Kontingent</th>
+                      <th class="px-3 py-2 text-center font-medium text-dimmed">Anmeldungen</th>
+                      <th class="px-3 py-2 text-left font-medium text-dimmed">Erstellt</th>
+                      <th class="w-px px-3 py-2" />
                     </tr>
                   </thead>
                   <tbody>
-                    {expeditions.items.map((e) => (
-                      <tr class="border-b border-zinc-100 dark:border-zinc-800 last:border-b-0">
+                    {raffles.map((raffle) => (
+                      <tr class="border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                        <td class="px-3 py-2">
+                          <p class="font-medium text-primary">{raffle.name}</p>
+                          {raffle.description ? (
+                            <p class="text-dimmed truncate max-w-xs">{raffle.description}</p>
+                          ) : null}
+                        </td>
+                        <td class="px-3 py-2">
+                          <span class={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_CLASS[raffle.status]}`}>
+                            {STATUS_LABEL[raffle.status]}
+                          </span>
+                        </td>
+                        <td class="px-3 py-2 text-center text-dimmed">{raffle.ticketContingent}</td>
+                        <td class="px-3 py-2 text-center text-dimmed">{raffle.registrationCount}</td>
+                        <td class="px-3 py-2 text-dimmed">
+                          {new Date(raffle.createdAt).toLocaleDateString("de-DE", { dateStyle: "medium" })}
+                        </td>
                         <td class="px-3 py-2">
                           <a
-                            href={`/app/expeditions/${e.id}`}
-                            class="flex items-center gap-2 hover:underline"
+                            href={`/admin/raffle/${raffle.id}`}
+                            class="btn-secondary btn-sm"
                           >
-                            <i class={`${e.icon || "ti ti-map-2"} text-dimmed`} />
-                            <span class="font-medium text-primary">{e.title}</span>
+                            Details
                           </a>
-                        </td>
-                        <td class="px-3 py-2 text-dimmed">
-                          {e.doneWaypoints}/{e.totalWaypoints}
-                        </td>
-                        <td class="px-3 py-2">
-                          {e.completedAt ? (
-                            <span class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                              <i class="ti ti-flag-check" /> Completed
-                            </span>
-                          ) : (
-                            <span class="text-dimmed">In progress</span>
-                          )}
-                        </td>
-                        <td class="px-3 py-2 text-dimmed">
-                          {e.permissionCount === 0 ? (
-                            <span class="text-red-500">orphaned</span>
-                          ) : (
-                            `${e.permissionCount} entries`
-                          )}
-                        </td>
-                        <td class="px-3 py-2 text-right">
-                          <AdminExpeditionActions expeditionId={e.id} expeditionTitle={e.title} />
                         </td>
                       </tr>
                     ))}
@@ -139,16 +82,12 @@ export default ssr<AuthContext>(async (c) => {
               </div>
             </section>
           ) : (
-            <p class="paper p-8 text-center text-xs text-dimmed">
-              {search
-                ? `No expeditions match "${search}".`
-                : "No expeditions yet."}
-            </p>
+            <div class="paper p-8 text-center">
+              <i class="ti ti-ticket-off text-2xl text-dimmed mb-2 block" />
+              <p class="text-sm text-dimmed">Noch keine Verlosungen vorhanden. Erstelle jetzt eine!</p>
+            </div>
           )}
 
-          {totalPages > 1 ? (
-            <Pagination currentPage={page} totalPages={totalPages} baseUrl={baseUrl} />
-          ) : null}
         </div>
       </div>
     </AdminLayout>

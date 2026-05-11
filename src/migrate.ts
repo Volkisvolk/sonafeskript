@@ -1,81 +1,202 @@
 import { sql } from "bun";
 
 /**
- * Database migrations for the expeditions app.
+ * Datenbankmigrationen für die Verlosungs-App.
  *
- * Runs idempotently on every container startup (`lifecycle.setup` in index.ts).
- * Two tables, one junction:
+ * Wird bei jedem Container-Start einmal idempotent ausgeführt.
+ * Alle Tabellen liegen im Schema `raffle.*`.
  *
- *   expeditions.expeditions       — the tenancy entity (a "journey" with a goal)
- *   expeditions.waypoints         — items within an expedition (steps to tick off)
- *   expeditions.expedition_access — junction → auth.access (members + permissions)
- *
- * Schema is namespaced (`expeditions.*`) so it never collides with tables
- * owned by other apps. The `auth.access` row carries the actual permission
- * (read / write / admin); the junction just links a row to a resource.
+ * Tabellen:
+ *   raffle.state           — Einzel-Zeilen-Tabelle für den Verlosungsstatus
+ *   raffle.registrations   — Alle Anmeldungen für die Verlosung
+ *   raffle.groups          — Gruppen (gemeinsam gewinnen oder verlieren)
+ *   raffle.ticket_events   — Audit-Log für Bezahlung, Abholung, Anpassungen
+ *   raffle.external_links  — Externe Links, die auf der Startseite angezeigt werden
  */
 export const migrate = async (): Promise<void> => {
   await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`.simple();
+  await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`.simple();
 
-  await sql`CREATE SCHEMA IF NOT EXISTS expeditions`.simple();
-  console.log("  ✓ expeditions schema");
+  await sql`CREATE SCHEMA IF NOT EXISTS raffle`.simple();
+  console.log("  ✓ raffle schema");
 
-  // ── Expedition (tenancy entity) ─────────────────────────────────────────
-  // `completed_at` is a derived denormalisation: it's set when the last
-  // waypoint is ticked off, cleared when a previously-done waypoint is
-  // unticked. Lets the list view show progress without re-aggregating.
+  // ── State (Einzel-Zeile für Verlosungsstatus) ────────────────────────────
   await sql`
-    CREATE TABLE IF NOT EXISTS expeditions.expeditions (
-      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      title        TEXT NOT NULL,
-      description  TEXT,
-      icon         TEXT NOT NULL DEFAULT 'ti ti-map-2',
-      completed_at TIMESTAMPTZ,
-      created_by   UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `.simple();
-  console.log("  ✓ expeditions.expeditions table");
-
-  // ── Access junction → auth.access ───────────────────────────────────────
-  // Same pattern as spaces.space_access / notebooks.notebook_access. The row
-  // in auth.access carries the principal (user / group / authenticated /
-  // public) plus the permission level; this junction just attaches it to a
-  // specific expedition. Cascades on both sides — deleting the expedition or
-  // the access entry cleans up the link automatically.
-  await sql`
-    CREATE TABLE IF NOT EXISTS expeditions.expedition_access (
-      expedition_id UUID NOT NULL REFERENCES expeditions.expeditions(id) ON DELETE CASCADE,
-      access_id     UUID NOT NULL REFERENCES auth.access(id) ON DELETE CASCADE,
-      PRIMARY KEY (expedition_id, access_id)
-    )
-  `.simple();
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_expedition_access_access
-    ON expeditions.expedition_access(access_id)
-  `.simple();
-  console.log("  ✓ expeditions.expedition_access table");
-
-  // ── Waypoints (items within an expedition) ──────────────────────────────
-  // `position` keeps the user-defined order (drag-handle-ready, even though
-  // this template doesn't ship reordering). `done_at` doubles as a boolean
-  // and a timestamp; null = open, set = done. We index (expedition_id,
-  // position) so the detail view's ordered list is a single index scan.
-  await sql`
-    CREATE TABLE IF NOT EXISTS expeditions.waypoints (
-      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      expedition_id UUID NOT NULL REFERENCES expeditions.expeditions(id) ON DELETE CASCADE,
-      title         TEXT NOT NULL,
-      position      INT  NOT NULL DEFAULT 0,
-      done_at       TIMESTAMPTZ,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CREATE TABLE IF NOT EXISTS raffle.state (
+      id            INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      raffle_status TEXT NOT NULL DEFAULT 'open'
+                    CHECK (raffle_status IN ('open', 'raffled', 'finalized')),
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `.simple();
   await sql`
-    CREATE INDEX IF NOT EXISTS idx_waypoints_expedition_position
-    ON expeditions.waypoints(expedition_id, position)
+    INSERT INTO raffle.state (id, raffle_status) VALUES (1, 'open')
+    ON CONFLICT (id) DO NOTHING
   `.simple();
-  console.log("  ✓ expeditions.waypoints table");
+  console.log("  ✓ raffle.state table");
+
+  // ── Groups (Gruppen) ─────────────────────────────────────────────────────
+  // Gruppen werden zuerst angelegt, damit registrations.group_id darauf
+  // verweisen kann.
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.groups (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name        TEXT NOT NULL,
+      invite_code TEXT NOT NULL UNIQUE,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.simple();
+  console.log("  ✓ raffle.groups table");
+
+  // ── Registrations (Anmeldungen) ──────────────────────────────────────────
+  // `status` = 'pending' bis zur Verlosung, dann 'won' oder 'lost'.
+  // `qr_token` wird beim Gewinnen generiert und in der Mail als QR-Code geschickt.
+  // `collected_by` enthält die E-Mail-Adresse der Vollmacht-Person.
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.registrations (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name              TEXT NOT NULL,
+      email             TEXT NOT NULL UNIQUE,
+      requested_tickets INT  NOT NULL CHECK (requested_tickets IN (1, 2)),
+      accepted_agb      BOOLEAN NOT NULL DEFAULT false,
+      group_id          UUID REFERENCES raffle.groups(id) ON DELETE SET NULL,
+      status            TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'won', 'lost')),
+      won_tickets       INT,
+      qr_token          TEXT UNIQUE,
+      paid_at           TIMESTAMPTZ,
+      collected_at      TIMESTAMPTZ,
+      collected_by      TEXT,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_registrations_email
+    ON raffle.registrations(LOWER(email))
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_registrations_group
+    ON raffle.registrations(group_id)
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_registrations_status
+    ON raffle.registrations(status)
+  `.simple();
+  // GIN-Index für ähnliche Namen (Betrugsfilter mit pg_trgm)
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_registrations_name_trgm
+    ON raffle.registrations USING GIN (name gin_trgm_ops)
+  `.simple();
+  console.log("  ✓ raffle.registrations table");
+
+  // ── Ticket Events (Audit-Log) ────────────────────────────────────────────
+  // Protokolliert alle relevanten Ereignisse: Bezahlung, Abholung,
+  // Anpassungen, Entfernungen. Für Nachvollziehbarkeit bei Streitigkeiten.
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.ticket_events (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      registration_id UUID NOT NULL REFERENCES raffle.registrations(id) ON DELETE CASCADE,
+      event_type      TEXT NOT NULL CHECK (event_type IN (
+                        'paid', 'paid_reverted',
+                        'collected', 'collected_reverted',
+                        'collected_by_proxy',
+                        'tickets_adjusted',
+                        'removed_by_admin'
+                      )),
+      details         TEXT,
+      performed_by    TEXT,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_ticket_events_registration
+    ON raffle.ticket_events(registration_id)
+  `.simple();
+  console.log("  ✓ raffle.ticket_events table");
+
+  // ── External Links (Externe Links) ──────────────────────────────────────
+  // Optionale Links (z.B. zur Veranstaltungsseite), die auf der Startseite
+  // angezeigt werden.
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.external_links (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      label      TEXT NOT NULL,
+      url        TEXT NOT NULL,
+      sort_order INT  NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.simple();
+  console.log("  ✓ raffle.external_links table");
+
+  // ── Raffles (Verlosungen) ────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.raffles (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name              TEXT NOT NULL,
+      description       TEXT,
+      status            TEXT NOT NULL DEFAULT 'open'
+                        CHECK (status IN ('open', 'raffled', 'finalized')),
+      ticket_contingent INT  NOT NULL DEFAULT 100,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.simple();
+  console.log("  ✓ raffle.raffles table");
+
+  // ── raffle_id auf registrations ──────────────────────────────────────────
+  await sql`
+    ALTER TABLE raffle.registrations
+    ADD COLUMN IF NOT EXISTS raffle_id UUID REFERENCES raffle.raffles(id) ON DELETE CASCADE
+  `.simple();
+
+  // ── raffle_id auf groups ─────────────────────────────────────────────────
+  await sql`
+    ALTER TABLE raffle.groups
+    ADD COLUMN IF NOT EXISTS raffle_id UUID REFERENCES raffle.raffles(id) ON DELETE CASCADE
+  `.simple();
+
+  // ── Backfill: Anmeldungen ohne raffle_id einer Dummy-Verlosung zuweisen ──
+  const [orphan] = await sql<{ cnt: number }[]>`
+    SELECT COUNT(*)::int AS cnt FROM raffle.registrations WHERE raffle_id IS NULL
+  `;
+  if ((orphan?.cnt ?? 0) > 0) {
+    const [dummy] = await sql<{ id: string }[]>`
+      INSERT INTO raffle.raffles (name, description, ticket_contingent)
+      VALUES ('Standard-Verlosung', 'Automatisch erstellt (Migration)', 100)
+      RETURNING id
+    `;
+    if (dummy) {
+      await sql`
+        UPDATE raffle.registrations SET raffle_id = ${dummy.id}::uuid WHERE raffle_id IS NULL
+      `;
+      await sql`
+        UPDATE raffle.groups SET raffle_id = ${dummy.id}::uuid WHERE raffle_id IS NULL
+      `;
+      console.log("  ✓ backfill: Standard-Verlosung erstellt und zugewiesen");
+    }
+  }
+
+  // ── Indizes ───────────────────────────────────────────────────────────────
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_registrations_raffle_id
+    ON raffle.registrations(raffle_id)
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_groups_raffle_id
+    ON raffle.groups(raffle_id)
+  `.simple();
+  console.log("  ✓ raffle_id indexes");
+
+  // ── Email-Unique: global → pro Verlosung ──────────────────────────────────
+  // Die ursprüngliche globale UNIQUE-Constraint auf email erlaubt nur eine
+  // Registrierung pro E-Mail über alle Verlosungen hinweg. Wir ersetzen sie
+  // durch einen partiellen Unique-Index pro Verlosung.
+  await sql`
+    ALTER TABLE raffle.registrations DROP CONSTRAINT IF EXISTS registrations_email_key
+  `.simple();
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_email_per_raffle
+    ON raffle.registrations(raffle_id, LOWER(email))
+  `.simple();
+  console.log("  ✓ email unique per raffle");
 };

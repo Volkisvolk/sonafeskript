@@ -5,11 +5,11 @@
 FROM oven/bun:1-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --ignore-scripts
+RUN bun install --ignore-scripts
 
 FROM deps AS build
 ENV NODE_ENV=production \
-    APP_ID=expeditions \
+    APP_ID=raffle \
     APP_DIR=.
 COPY tsconfig.json ./
 COPY src src
