@@ -136,13 +136,21 @@ export const finalizeRaffle = async (
     };
   }
 
-  const [winSubject, winBody, lossSubject, lossBody, replyTo] = await Promise.all([
+  const raffle = await rafflesService.get(raffleId);
+
+  const [globalWinSubject, globalWinBody, globalLossSubject, globalLossBody, globalReplyTo] = await Promise.all([
     settings.get<string>("raffle.win_email_subject"),
     settings.get<string>("raffle.win_email_body"),
     settings.get<string>("raffle.loss_email_subject"),
     settings.get<string>("raffle.loss_email_body"),
     settings.get<string>("raffle.reply_to_email"),
   ]);
+
+  const winSubject = raffle?.winEmailSubject ?? globalWinSubject;
+  const winBody = raffle?.winEmailBody ?? globalWinBody;
+  const lossSubject = raffle?.lossEmailSubject ?? globalLossSubject;
+  const lossBody = raffle?.lossEmailBody ?? globalLossBody;
+  const replyTo = raffle?.replyToEmail ?? globalReplyTo;
 
   const allRegistrations = await registrationsService.listAll({ raffleId });
   let emailsSent = 0;

@@ -4,6 +4,7 @@ import { Layout } from "@valentinkolb/cloud/ssr";
 import { raffleService } from "@/service";
 
 export default ssr<AuthContext>(async (c) => {
+  const user = c.get("user");
   const [raffles, links] = await Promise.all([
     raffleService.raffles.listOpen(),
     raffleService.links.listAll(),
@@ -22,6 +23,12 @@ export default ssr<AuthContext>(async (c) => {
           <p class="text-sm text-dimmed">
             Wähle eine Verlosung aus und melde dich an.
           </p>
+          {user ? (
+            <a href="/app/raffle/my" class="btn-secondary btn-sm mt-3 inline-flex items-center gap-1">
+              <i class="ti ti-ticket" />
+              Meine Verlosungen
+            </a>
+          ) : null}
         </div>
 
         {/* ── Verlosungsliste ─────────────────────────────────────────────── */}
@@ -34,7 +41,11 @@ export default ssr<AuthContext>(async (c) => {
               const remaining = Math.max(0, raffle.ticketContingent - raffle.registrationCount);
 
               return (
-                <div class="paper p-5">
+                <div class="paper overflow-hidden">
+                  {raffle.bannerUrl ? (
+                    <img src={raffle.bannerUrl} alt="" class="w-full object-cover max-h-36" style={`object-position: ${raffle.bannerPosition ?? "50% 50%"}`} />
+                  ) : null}
+                  <div class="p-5">
                   <div class="flex items-start justify-between gap-3 mb-3">
                     <div>
                       <h2 class="text-base font-semibold text-primary">{raffle.name}</h2>
@@ -69,6 +80,7 @@ export default ssr<AuthContext>(async (c) => {
                     <i class="ti ti-arrow-right mr-2" />
                     Jetzt anmelden
                   </a>
+                  </div>
                 </div>
               );
             })}

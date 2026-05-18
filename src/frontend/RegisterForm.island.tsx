@@ -18,7 +18,6 @@ export default function RegisterForm(props: Props) {
   const [loading, setLoading] = createSignal(false);
   const [done, setDone] = createSignal<{ inviteCode?: string } | null>(null);
   const [error, setError] = createSignal("");
-  const [groupConflict, setGroupConflict] = createSignal<{ code: string; name: string } | null>(null);
 
   // Vorschau der Gruppe beim Eintippen des Codes
   const [groupPreview] = createResource(
@@ -49,7 +48,6 @@ export default function RegisterForm(props: Props) {
       return setError("Bitte gib den Einladungscode ein.");
 
     setLoading(true);
-    setGroupConflict(null);
     try {
       const res = await fetch(`/api/raffle/raffles/${props.raffleId}/register`, {
         method: "POST",
@@ -66,12 +64,7 @@ export default function RegisterForm(props: Props) {
 
       const body = await res.json();
       if (!res.ok) {
-        if (res.status === 409 && body.conflictGroupCode) {
-          setGroupConflict({ code: body.conflictGroupCode, name: body.conflictGroupName });
-          setError(body.message ?? "Gruppenname bereits vergeben.");
-        } else {
-          setError(body.message ?? "Ein Fehler ist aufgetreten. Bitte versuche es erneut.");
-        }
+        setError(body.message ?? "Ein Fehler ist aufgetreten. Bitte versuche es erneut.");
         return;
       }
 
@@ -202,7 +195,17 @@ export default function RegisterForm(props: Props) {
 
           {/* Gruppe */}
           <div>
-            <p class="text-xs font-medium text-dimmed mb-2">Gruppe (optional)</p>
+            <div class="flex items-center justify-between mb-2">
+              <p class="text-xs font-medium text-dimmed">Gruppe (optional)</p>
+            </div>
+            <div class="info-block-info p-3 text-xs mb-3">
+              <i class="ti ti-users mr-1" />
+              <strong>Was ist eine Gruppe?</strong>{" "}
+              Eine Gruppe hat keinen Einfluss auf deine Gewinnchance — sie entscheidet nur,
+              ob ihr gemeinsam gewinnt oder gemeinsam leer ausgeht. Entweder bekommen alle
+              Mitglieder Karten, oder niemand. Eine Person erstellt die Gruppe und teilt
+              den Einladungscode mit den anderen.
+            </div>
             <div class="flex gap-2 flex-wrap">
               {(["none", "create", "join"] as const).map((mode) => (
                 <button
@@ -228,7 +231,7 @@ export default function RegisterForm(props: Props) {
                   class="btn-input w-full"
                   placeholder="Name deiner Gruppe"
                   value={groupName()}
-                  onInput={(e) => { setGroupName(e.currentTarget.value); setGroupConflict(null); setError(""); }}
+                  onInput={(e) => { setGroupName(e.currentTarget.value); setError(""); }}
                   maxLength={100}
                 />
                 <p class="text-xs text-dimmed mt-1">
@@ -274,26 +277,9 @@ export default function RegisterForm(props: Props) {
 
           {/* Fehler */}
           <Show when={error()}>
-            <div class="info-block-danger p-3 text-sm flex flex-col gap-2">
-              <div>
-                <i class="ti ti-alert-circle mr-1" />
-                {error()}
-              </div>
-              <Show when={groupConflict()}>
-                <button
-                  type="button"
-                  class="btn-secondary btn-sm self-start"
-                  onClick={() => {
-                    setJoinCode(groupConflict()!.code);
-                    setGroupMode("join");
-                    setGroupConflict(null);
-                    setError("");
-                  }}
-                >
-                  <i class="ti ti-users mr-1" />
-                  Gruppe „{groupConflict()?.name}" beitreten
-                </button>
-              </Show>
+            <div class="info-block-danger p-3 text-sm">
+              <i class="ti ti-alert-circle mr-1" />
+              {error()}
             </div>
           </Show>
 

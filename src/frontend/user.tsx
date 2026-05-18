@@ -1,8 +1,8 @@
 import { ssr } from "../config";
 import { type AuthContext } from "@valentinkolb/cloud/server";
-import { AdminLayout } from "@valentinkolb/cloud/ssr";
+import { Layout } from "@valentinkolb/cloud/ssr";
 import { raffleService } from "@/service";
-import AdminCreateRaffle from "./AdminCreateRaffle.island";
+import UserCreateRaffle from "./UserCreateRaffle.island";
 
 const STATUS_LABEL: Record<string, string> = {
   open: "Offen",
@@ -17,23 +17,27 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 export default ssr<AuthContext>(async (c) => {
-  const raffles = await raffleService.raffles.list();
+  const user = c.get("user")!;
+  const raffles = await raffleService.raffles.listByUser(user.id);
 
   return () => (
-    <AdminLayout c={c} title="Verlosungen" stretch>
-      <div class="flex-1 min-h-0 overflow-y-auto">
-        <div class="flex flex-col gap-3">
+    <Layout c={c} title="Meine Verlosungen">
+      <div class="max-w-2xl mx-auto pb-12">
 
-          {/* ── Überschrift ───────────────────────────────────────────────── */}
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <h1 class="text-base font-semibold text-primary">Verlosungsverwaltung</h1>
-            <span class="text-xs text-dimmed">{raffles.length} Verlosung{raffles.length !== 1 ? "en" : ""}</span>
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-xl font-bold text-primary">Meine Verlosungen</h1>
+            <p class="text-sm text-dimmed mt-0.5">Verlosungen, die du erstellt hast</p>
           </div>
+          <a href="/app/raffle" class="btn-secondary btn-sm">
+            <i class="ti ti-arrow-left mr-1" />
+            Übersicht
+          </a>
+        </div>
 
-          {/* ── Neue Verlosung erstellen ───────────────────────────────────── */}
-          <AdminCreateRaffle />
+        <div class="flex flex-col gap-3">
+          <UserCreateRaffle />
 
-          {/* ── Verlosungsliste ────────────────────────────────────────────── */}
           {raffles.length > 0 ? (
             <section class="paper overflow-hidden">
               <div class="overflow-x-auto">
@@ -44,7 +48,6 @@ export default ssr<AuthContext>(async (c) => {
                       <th class="px-3 py-2 text-left font-medium text-dimmed">Status</th>
                       <th class="px-3 py-2 text-center font-medium text-dimmed">Kontingent</th>
                       <th class="px-3 py-2 text-center font-medium text-dimmed">Anmeldungen</th>
-                      <th class="px-3 py-2 text-left font-medium text-dimmed">Erstellt</th>
                       <th class="w-px px-3 py-2" />
                     </tr>
                   </thead>
@@ -64,15 +67,9 @@ export default ssr<AuthContext>(async (c) => {
                         </td>
                         <td class="px-3 py-2 text-center text-dimmed">{raffle.ticketContingent}</td>
                         <td class="px-3 py-2 text-center text-dimmed">{raffle.registrationCount}</td>
-                        <td class="px-3 py-2 text-dimmed">
-                          {new Date(raffle.createdAt).toLocaleDateString("de-DE", { dateStyle: "medium" })}
-                        </td>
                         <td class="px-3 py-2">
-                          <a
-                            href={`/admin/raffle/${raffle.id}`}
-                            class="btn-secondary btn-sm"
-                          >
-                            Details
+                          <a href={`/app/raffle/my/${raffle.id}`} class="btn-secondary btn-sm">
+                            Verwalten
                           </a>
                         </td>
                       </tr>
@@ -84,12 +81,12 @@ export default ssr<AuthContext>(async (c) => {
           ) : (
             <div class="paper p-8 text-center">
               <i class="ti ti-ticket-off text-2xl text-dimmed mb-2 block" />
-              <p class="text-sm text-dimmed">Noch keine Verlosungen vorhanden. Erstelle jetzt eine!</p>
+              <p class="text-sm text-dimmed">Du hast noch keine Verlosungen erstellt.</p>
             </div>
           )}
-
         </div>
+
       </div>
-    </AdminLayout>
+    </Layout>
   );
 });

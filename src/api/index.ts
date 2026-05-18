@@ -3,7 +3,7 @@ import { describeRoute } from "hono-openapi";
 import { z } from "zod";
 import { sql } from "bun";
 import { v, jsonResponse, auth, type AuthContext, rateLimit, respond } from "@valentinkolb/cloud/server";
-import { settings } from "@valentinkolb/cloud/services";
+import { settings, notifications } from "@valentinkolb/cloud/services";
 import { raffleService } from "../service";
 import {
   RegisterSchema,
@@ -14,6 +14,7 @@ import {
   CreateLinkSchema,
   UpdateLinkSchema,
   CreateRaffleSchema,
+  UpdateRaffleSchema,
   RegistrationSchema,
   GroupPublicSchema,
   ExternalLinkSchema,
@@ -31,6 +32,13 @@ const RegistrationListSchema = z.array(RegistrationSchema);
 const ExternalLinkListSchema = z.array(ExternalLinkSchema);
 const SimilarNamePairListSchema = z.array(SimilarNamePairSchema);
 const RaffleItemListSchema = z.array(RaffleItemSchema);
+
+const getOwnedRaffle = async (raffleId: string, userId: string) => {
+  const raffle = await raffleService.raffles.get(raffleId);
+  if (!raffle) return { ok: false as const, error: "Verlosung nicht gefunden.", status: 404 as const };
+  if (raffle.createdBy !== userId) return { ok: false as const, error: "Keine Berechtigung.", status: 403 as const };
+  return { ok: true as const, raffle };
+};
 
 const app = new Hono<AuthContext>()
 
@@ -103,6 +111,15 @@ const app = new Hono<AuthContext>()
         );
       }
 
+      if (raffle.allowedEmailPatterns.length > 0) {
+        const allowed = raffle.allowedEmailPatterns.some((pattern) => {
+          try { return new RegExp(pattern, "i").test(data.email); } catch { return false; }
+        });
+        if (!allowed) {
+          return c.json({ error: true, message: "Deine E-Mail-Adresse ist für diese Verlosung nicht zugelassen." }, 400);
+        }
+      }
+
       let groupId: string | undefined;
       let inviteCode: string | undefined;
 
@@ -119,12 +136,7 @@ const app = new Hono<AuthContext>()
         const existing = await raffleService.groups.getByName({ name: data.createGroupName, raffleId });
         if (existing) {
           return c.json(
-            {
-              error: true,
-              message: `Eine Gruppe mit dem Namen „${existing.name}" existiert bereits. Du kannst ihr mit dem Einladungscode beitreten.`,
-              conflictGroupCode: existing.inviteCode,
-              conflictGroupName: existing.name,
-            },
+            { error: true, message: `Eine Gruppe mit dem Namen „${existing.name}" existiert bereits. Bitte wähle einen anderen Namen.` },
             409,
           );
         }
@@ -159,6 +171,45 @@ const app = new Hono<AuthContext>()
           return c.json({ error: true, message: groupResult.error }, 500);
         }
         inviteCode = groupResult.data.inviteCode;
+      }
+
+      // ── Anmeldungs-Bestätigungsmail ─────────────────────────────────────────
+      {
+        const raffle = await raffleService.raffles.get(raffleId);
+        const [globalRegSubject, globalRegBody, globalReplyTo] = await Promise.all([
+          settings.get<string>("raffle.reg_email_subject"),
+          settings.get<string>("raffle.reg_email_body"),
+          settings.get<string>("raffle.reply_to_email"),
+        ]);
+
+        const defaultSubject = "Deine Anmeldung für {{raffle_name}}";
+        const defaultBody = "Hallo {{name}},\n\ndu hast dich erfolgreich für die Verlosung angemeldet. Du erhältst nach der Verlosung eine E-Mail mit deinem Ergebnis.\n\nViel Glück!";
+
+        const rawSubject = (raffle?.regEmailSubject ?? globalRegSubject ?? defaultSubject)
+          .replace(/{{name}}/g, data.name)
+          .replace(/{{raffle_name}}/g, raffle?.name ?? "die Verlosung");
+
+        const rawBody = (raffle?.regEmailBody ?? globalRegBody ?? defaultBody)
+          .replace(/{{name}}/g, data.name)
+          .replace(/{{raffle_name}}/g, raffle?.name ?? "die Verlosung");
+
+        const groupSection = inviteCode
+          ? `<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+             <p style="font-weight:600">Dein Gruppeneinladungscode:</p>
+             <p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center;padding:12px 0">${inviteCode}</p>
+             <p style="color:#666;font-size:14px">Teile diesen Code mit den anderen Mitgliedern deiner Gruppe. Eine Gruppe hat keinen Einfluss auf deine Gewinnchance &mdash; sie sorgt nur daf&uuml;r, dass ihr als Gruppe das gleiche Ergebnis erhaltet.</p>`
+          : "";
+
+        const replyTo = raffle?.replyToEmail ?? globalReplyTo;
+        await notifications
+          .send({
+            type: "email",
+            recipient: data.email,
+            subject: rawSubject,
+            rawHtml: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><p style="white-space:pre-wrap">${rawBody.replace(/</g, "&lt;")}</p>${groupSection}</div>`,
+            ...(replyTo ? { replyTo } : {}),
+          })
+          .catch(() => {});
       }
 
       return c.json({
@@ -211,385 +262,6 @@ const app = new Hono<AuthContext>()
   // ═══════════════════════════════════════════════════════════════════════════
 
   .use("/admin/*", auth.requireRole("admin"))
-
-  // ── Admin: Verlosungen ────────────────────────────────────────────────────
-
-  .get(
-    "/admin/raffles",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Alle Verlosungen auflisten",
-      responses: { 200: jsonResponse(RaffleItemListSchema, "Alle Verlosungen") },
-    }),
-    async (c) => {
-      const raffles = await raffleService.raffles.list();
-      return c.json(raffles);
-    },
-  )
-
-  .post(
-    "/admin/raffles",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Neue Verlosung erstellen",
-      responses: {
-        200: jsonResponse(RaffleItemSchema, "Neue Verlosung"),
-        400: jsonResponse(ErrorResponseSchema, "Ungültige Eingabe"),
-      },
-    }),
-    v("json", CreateRaffleSchema),
-    async (c) => {
-      const data = c.req.valid("json");
-      const result = await raffleService.raffles.create(data);
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json(result.data);
-    },
-  )
-
-  .delete(
-    "/admin/raffles/:raffleId",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Verlosung löschen",
-      responses: {
-        200: jsonResponse(MessageResponseSchema, "Gelöscht"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const result = await raffleService.raffles.remove(raffleId);
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
-      return c.json({ message: "Verlosung wurde gelöscht." });
-    },
-  )
-
-  .get(
-    "/admin/raffles/:raffleId/summary",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Admin-Zusammenfassung einer Verlosung",
-      responses: {
-        200: jsonResponse(
-          z.object({
-            raffle: RaffleItemSchema,
-            total: z.number(), won: z.number(), lost: z.number(), pending: z.number(),
-            paid: z.number(), collected: z.number(), totalRequestedTickets: z.number(), totalWonTickets: z.number(),
-          }),
-          "Zusammenfassung",
-        ),
-      },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const raffle = await raffleService.raffles.get(raffleId);
-      if (!raffle) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
-      const summary = await raffleService.registrations.getAdminSummary({ raffleId });
-      return c.json({ raffle, ...summary });
-    },
-  )
-
-  // ── Admin: Anmeldungen einer Verlosung ────────────────────────────────────
-
-  .get(
-    "/admin/raffles/:raffleId/registrations",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Anmeldungen einer Verlosung",
-      responses: { 200: jsonResponse(RegistrationListSchema, "Anmeldungsliste") },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const search = c.req.query("search")?.trim();
-      const filter = c.req.query("filter") as any;
-      const page = Math.max(1, Number(c.req.query("page") ?? 1));
-      const perPage = Math.min(100, Math.max(1, Number(c.req.query("perPage") ?? 50)));
-
-      const result = await raffleService.registrations.listAdmin({
-        raffleId,
-        search,
-        filter,
-        pagination: { page, perPage },
-      });
-      return c.json({ items: result.items, total: result.total, page, perPage });
-    },
-  )
-
-  .get(
-    "/admin/raffles/:raffleId/registrations/:regId",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Anmeldung abrufen",
-      responses: {
-        200: jsonResponse(RegistrationSchema, "Anmeldung"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const reg = await raffleService.registrations.get({ id: regId });
-      if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
-      const events = await raffleService.tickets.getEvents({ registrationId: regId });
-      return c.json({ ...reg, ticketEvents: events });
-    },
-  )
-
-  .patch(
-    "/admin/raffles/:raffleId/registrations/:regId",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Anmeldung bearbeiten",
-      responses: {
-        200: jsonResponse(RegistrationSchema, "Aktualisierte Anmeldung"),
-        400: jsonResponse(ErrorResponseSchema, "Ungültige Eingabe"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
-    }),
-    v("json", UpdateRegistrationSchema),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const data = c.req.valid("json");
-      return respond(c, raffleService.registrations.update({ id: regId, data }));
-    },
-  )
-
-  .delete(
-    "/admin/raffles/:raffleId/registrations/:regId",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Anmeldung löschen",
-      responses: {
-        200: jsonResponse(MessageResponseSchema, "Gelöscht"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const result = await raffleService.registrations.remove({ id: regId });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
-      return c.json({ message: "Anmeldung wurde gelöscht." });
-    },
-  )
-
-  // ── Admin: Person aus Gruppe entfernen ───────────────────────────────────
-
-  .delete(
-    "/admin/raffles/:raffleId/registrations/:regId/group",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Person aus Gruppe entfernen",
-      responses: {
-        200: jsonResponse(MessageResponseSchema, "Aus Gruppe entfernt"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const reg = await raffleService.registrations.get({ id: regId });
-      if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
-
-      const oldGroupId = reg.groupId;
-      const result = await raffleService.registrations.updateGroup({ id: regId, groupId: null });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 500);
-
-      if (oldGroupId) await raffleService.groups.removeIfEmpty({ id: oldGroupId });
-      return c.json({ message: "Person wurde aus der Gruppe entfernt." });
-    },
-  )
-
-  // ── Admin: Verlosungsprozess ──────────────────────────────────────────────
-
-  .post(
-    "/admin/raffles/:raffleId/run-raffle",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Verlosung durchführen",
-      responses: {
-        200: jsonResponse(z.object({ winners: z.number(), losers: z.number(), contingent: z.number() }), "Ergebnis"),
-        400: jsonResponse(ErrorResponseSchema, "Fehler"),
-      },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const result = await raffleService.raffle.runRaffle(raffleId);
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json(result.data);
-    },
-  )
-
-  .post(
-    "/admin/raffles/:raffleId/finalize",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Verlosung finalisieren und Mails versenden",
-      responses: {
-        200: jsonResponse(z.object({ emailsSent: z.number(), errors: z.number() }), "Ergebnis"),
-        400: jsonResponse(ErrorResponseSchema, "Fehler"),
-      },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const result = await raffleService.raffle.finalizeRaffle(raffleId);
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json(result.data);
-    },
-  )
-
-  .post(
-    "/admin/raffles/:raffleId/reset",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Verlosung zurücksetzen",
-      responses: {
-        200: jsonResponse(MessageResponseSchema, "Zurückgesetzt"),
-        400: jsonResponse(ErrorResponseSchema, "Fehler"),
-      },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const result = await raffleService.raffle.resetRaffle(raffleId);
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Verlosung wurde zurückgesetzt. Alle Anmeldungen sind wieder ausstehend." });
-    },
-  )
-
-  // ── Admin: Ticket-Aktionen ────────────────────────────────────────────────
-
-  .post(
-    "/admin/raffles/:raffleId/registrations/:regId/mark-paid",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Als bezahlt markieren",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Als bezahlt markiert") },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const user = c.get("user");
-      const result = await raffleService.tickets.markPaid({ registrationId: regId, performedBy: user?.email });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Als bezahlt markiert." });
-    },
-  )
-
-  .delete(
-    "/admin/raffles/:raffleId/registrations/:regId/mark-paid",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Bezahlung zurücksetzen",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Bezahlung zurückgesetzt") },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const user = c.get("user");
-      const result = await raffleService.tickets.revertPaid({ registrationId: regId, performedBy: user?.email });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Bezahlung wurde zurückgesetzt." });
-    },
-  )
-
-  .post(
-    "/admin/raffles/:raffleId/registrations/:regId/mark-collected",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Als abgeholt markieren",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Als abgeholt markiert") },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const user = c.get("user");
-      const result = await raffleService.tickets.markCollected({ registrationId: regId, performedBy: user?.email });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Okily Dokily! Als abgeholt markiert." });
-    },
-  )
-
-  .delete(
-    "/admin/raffles/:raffleId/registrations/:regId/mark-collected",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Abholung zurücksetzen",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Abholung zurückgesetzt") },
-    }),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const user = c.get("user");
-      const result = await raffleService.tickets.revertCollected({ registrationId: regId, performedBy: user?.email });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Abholung wurde zurückgesetzt." });
-    },
-  )
-
-  .post(
-    "/admin/raffles/:raffleId/registrations/:regId/mark-collected-proxy",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Per Vollmacht abgeholt",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Vollmacht eingetragen") },
-    }),
-    v("json", ProxyCollectSchema),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const { collectedByEmail } = c.req.valid("json");
-      const user = c.get("user");
-      const result = await raffleService.tickets.markCollectedByProxy({
-        registrationId: regId,
-        collectedByEmail,
-        performedBy: user?.email,
-      });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: `Karten wurden von ${collectedByEmail} per Vollmacht abgeholt.` });
-    },
-  )
-
-  .patch(
-    "/admin/raffles/:raffleId/registrations/:regId/adjust-tickets",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Gewonnene Karten anpassen",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Angepasst") },
-    }),
-    v("json", AdjustTicketsSchema),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const { wonTickets } = c.req.valid("json");
-      const user = c.get("user");
-      const result = await raffleService.tickets.adjustTickets({ registrationId: regId, wonTickets, performedBy: user?.email });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: `Karten angepasst auf ${wonTickets}.` });
-    },
-  )
-
-  .delete(
-    "/admin/raffles/:raffleId/registrations/:regId/remove-with-reason",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Anmeldung mit Begründung entfernen",
-      responses: { 200: jsonResponse(MessageResponseSchema, "Entfernt") },
-    }),
-    v("json", RemoveWithReasonSchema),
-    async (c) => {
-      const regId = c.req.param("regId");
-      const result = await raffleService.registrations.remove({ id: regId });
-      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
-      return c.json({ message: "Anmeldung wurde entfernt." });
-    },
-  )
-
-  // ── Admin: Betrugsfilter ──────────────────────────────────────────────────
-
-  .get(
-    "/admin/raffles/:raffleId/fraud-filter",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Ähnliche Namen (Betrugsfilter)",
-      responses: { 200: jsonResponse(SimilarNamePairListSchema, "Ähnliche Namenpaare") },
-    }),
-    async (c) => {
-      const raffleId = c.req.param("raffleId");
-      const pairs = await raffleService.registrations.findSimilarNames({ raffleId });
-      return c.json(pairs);
-    },
-  )
 
   // ── Admin: Externe Links ──────────────────────────────────────────────────
 
@@ -672,6 +344,457 @@ const app = new Hono<AuthContext>()
       ]);
       const row = rows[0];
       return c.json({ totalRegistrations: row?.total ?? 0, openRaffles: openRaffles.length });
+    },
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NUTZER-ENDPUNKTE (eigene Verlosungen)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  .use("/user/*", auth.requireRole("authenticated"))
+
+  .get(
+    "/user/raffles",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Verlosungen auflisten",
+      responses: { 200: jsonResponse(RaffleItemListSchema, "Eigene Verlosungen") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffles = await raffleService.raffles.listByUser(user.id);
+      return c.json(raffles);
+    },
+  )
+
+  .post(
+    "/user/raffles",
+    describeRoute({
+      tags: ["User"],
+      summary: "Neue Verlosung erstellen",
+      responses: {
+        200: jsonResponse(RaffleItemSchema, "Neue Verlosung"),
+        400: jsonResponse(ErrorResponseSchema, "Ungültige Eingabe"),
+      },
+    }),
+    v("json", CreateRaffleSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const data = c.req.valid("json");
+      const result = await raffleService.raffles.create(data, user.id);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json(result.data);
+    },
+  )
+
+  .patch(
+    "/user/raffles/:raffleId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Verlosung bearbeiten",
+      responses: {
+        200: jsonResponse(RaffleItemSchema, "Aktualisierte Verlosung"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    v("json", UpdateRaffleSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const data = c.req.valid("json");
+      return respond(c, raffleService.raffles.update(raffleId, data));
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Verlosung löschen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Gelöscht"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const result = await raffleService.raffles.remove(raffleId);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
+      return c.json({ message: "Verlosung wurde gelöscht." });
+    },
+  )
+
+  .get(
+    "/user/raffles/:raffleId/summary",
+    describeRoute({
+      tags: ["User"],
+      summary: "Zusammenfassung einer eigenen Verlosung",
+      responses: {
+        200: jsonResponse(
+          z.object({
+            raffle: RaffleItemSchema,
+            total: z.number(), won: z.number(), lost: z.number(), pending: z.number(),
+            paid: z.number(), collected: z.number(), totalRequestedTickets: z.number(), totalWonTickets: z.number(),
+          }),
+          "Zusammenfassung",
+        ),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const summary = await raffleService.registrations.getAdminSummary({ raffleId });
+      return c.json({ raffle: access.raffle, ...summary });
+    },
+  )
+
+  .get(
+    "/user/raffles/:raffleId/registrations",
+    describeRoute({
+      tags: ["User"],
+      summary: "Anmeldungen einer eigenen Verlosung",
+      responses: { 200: jsonResponse(RegistrationListSchema, "Anmeldungsliste"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const search = c.req.query("search")?.trim();
+      const filter = c.req.query("filter") as any;
+      const page = Math.max(1, Number(c.req.query("page") ?? 1));
+      const perPage = Math.min(100, Math.max(1, Number(c.req.query("perPage") ?? 50)));
+      const result = await raffleService.registrations.listAdmin({ raffleId, search, filter, pagination: { page, perPage } });
+      return c.json({ items: result.items, total: result.total, page, perPage });
+    },
+  )
+
+  .get(
+    "/user/raffles/:raffleId/registrations/:regId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Anmeldung abrufen",
+      responses: {
+        200: jsonResponse(RegistrationSchema, "Anmeldung"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const reg = await raffleService.registrations.get({ id: regId });
+      if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const events = await raffleService.tickets.getEvents({ registrationId: regId });
+      return c.json({ ...reg, ticketEvents: events });
+    },
+  )
+
+  .patch(
+    "/user/raffles/:raffleId/registrations/:regId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Anmeldung bearbeiten",
+      responses: {
+        200: jsonResponse(RegistrationSchema, "Aktualisierte Anmeldung"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    v("json", UpdateRegistrationSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const data = c.req.valid("json");
+      return respond(c, raffleService.registrations.update({ id: regId, data }));
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/registrations/:regId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Anmeldung löschen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Gelöscht"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.registrations.remove({ id: regId });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
+      return c.json({ message: "Anmeldung wurde gelöscht." });
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/registrations/:regId/group",
+    describeRoute({
+      tags: ["User"],
+      summary: "Person aus Gruppe entfernen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Aus Gruppe entfernt"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const reg = await raffleService.registrations.get({ id: regId });
+      if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const oldGroupId = reg.groupId;
+      const result = await raffleService.registrations.updateGroup({ id: regId, groupId: null });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 500);
+      if (oldGroupId) await raffleService.groups.removeIfEmpty({ id: oldGroupId });
+      return c.json({ message: "Person wurde aus der Gruppe entfernt." });
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/run-raffle",
+    describeRoute({
+      tags: ["User"],
+      summary: "Verlosung durchführen",
+      responses: {
+        200: jsonResponse(z.object({ winners: z.number(), losers: z.number(), contingent: z.number() }), "Ergebnis"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const result = await raffleService.raffle.runRaffle(raffleId);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json(result.data);
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/finalize",
+    describeRoute({
+      tags: ["User"],
+      summary: "Verlosung finalisieren und Mails versenden",
+      responses: {
+        200: jsonResponse(z.object({ emailsSent: z.number(), errors: z.number() }), "Ergebnis"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const result = await raffleService.raffle.finalizeRaffle(raffleId);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json(result.data);
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/reset",
+    describeRoute({
+      tags: ["User"],
+      summary: "Verlosung zurücksetzen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Zurückgesetzt"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const result = await raffleService.raffle.resetRaffle(raffleId);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Verlosung wurde zurückgesetzt. Alle Anmeldungen sind wieder ausstehend." });
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/registrations/:regId/mark-paid",
+    describeRoute({
+      tags: ["User"],
+      summary: "Als bezahlt markieren",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Als bezahlt markiert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.tickets.markPaid({ registrationId: regId, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Als bezahlt markiert." });
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/registrations/:regId/mark-paid",
+    describeRoute({
+      tags: ["User"],
+      summary: "Bezahlung zurücksetzen",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Bezahlung zurückgesetzt"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.tickets.revertPaid({ registrationId: regId, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Bezahlung wurde zurückgesetzt." });
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/registrations/:regId/mark-collected",
+    describeRoute({
+      tags: ["User"],
+      summary: "Als abgeholt markieren",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Als abgeholt markiert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.tickets.markCollected({ registrationId: regId, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Okily Dokily! Als abgeholt markiert." });
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/registrations/:regId/mark-collected",
+    describeRoute({
+      tags: ["User"],
+      summary: "Abholung zurücksetzen",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Abholung zurückgesetzt"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.tickets.revertCollected({ registrationId: regId, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Abholung wurde zurückgesetzt." });
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/registrations/:regId/mark-collected-proxy",
+    describeRoute({
+      tags: ["User"],
+      summary: "Per Vollmacht abgeholt",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Vollmacht eingetragen"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    v("json", ProxyCollectSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const { collectedByEmail } = c.req.valid("json");
+      const result = await raffleService.tickets.markCollectedByProxy({ registrationId: regId, collectedByEmail, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: `Karten wurden von ${collectedByEmail} per Vollmacht abgeholt.` });
+    },
+  )
+
+  .patch(
+    "/user/raffles/:raffleId/registrations/:regId/adjust-tickets",
+    describeRoute({
+      tags: ["User"],
+      summary: "Gewonnene Karten anpassen",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Angepasst"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    v("json", AdjustTicketsSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const { wonTickets } = c.req.valid("json");
+      const result = await raffleService.tickets.adjustTickets({ registrationId: regId, wonTickets, performedBy: user?.email });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: `Karten angepasst auf ${wonTickets}.` });
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/registrations/:regId/remove-with-reason",
+    describeRoute({
+      tags: ["User"],
+      summary: "Anmeldung mit Begründung entfernen",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Entfernt"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    v("json", RemoveWithReasonSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId");
+      const result = await raffleService.registrations.remove({ id: regId });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
+      return c.json({ message: "Anmeldung wurde entfernt." });
+    },
+  )
+
+  .get(
+    "/user/raffles/:raffleId/fraud-filter",
+    describeRoute({
+      tags: ["User"],
+      summary: "Ähnliche Namen (Betrugsfilter)",
+      responses: { 200: jsonResponse(SimilarNamePairListSchema, "Ähnliche Namenpaare"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId");
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const pairs = await raffleService.registrations.findSimilarNames({ raffleId });
+      return c.json(pairs);
     },
   );
 

@@ -4,6 +4,7 @@ import { Layout } from "@valentinkolb/cloud/ssr";
 import { settings } from "@valentinkolb/cloud/services";
 import { raffleService } from "@/service";
 import RegisterForm from "../RegisterForm.island";
+import RaffleFaq from "../RaffleFaq.island";
 
 export default ssr<AuthContext>(async (c) => {
   const id = c.req.param("id");
@@ -25,11 +26,14 @@ export default ssr<AuthContext>(async (c) => {
     );
   }
 
-  const [agbText, bannerUrl, stats] = await Promise.all([
+  const [globalAgbText, globalBannerUrl, stats] = await Promise.all([
     settings.get<string>("raffle.agb_text"),
     settings.get<string>("raffle.banner_url"),
     raffleService.registrations.getStats({ raffleId: id }),
   ]);
+
+  const bannerUrl = raffle.bannerUrl || globalBannerUrl;
+  const agbText = raffle.agbText || globalAgbText || "";
 
   const remaining = Math.max(0, raffle.ticketContingent - stats.totalRequestedTickets);
   const pct = raffle.ticketContingent === 0
@@ -50,7 +54,7 @@ export default ssr<AuthContext>(async (c) => {
         {/* ── Banner ──────────────────────────────────────────────────────── */}
         {bannerUrl ? (
           <div class="mb-6 rounded-xl overflow-hidden">
-            <img src={bannerUrl} alt="Verlosungs-Banner" class="w-full object-cover max-h-48" />
+            <img src={bannerUrl} alt="Verlosungs-Banner" class="w-full object-cover max-h-48" style={`object-position: ${raffle.bannerPosition ?? "50% 50%"}`} />
           </div>
         ) : null}
 
@@ -127,6 +131,9 @@ export default ssr<AuthContext>(async (c) => {
           <strong>Anmeldezahl:</strong> {stats.totalRegistrations} Person{stats.totalRegistrations !== 1 ? "en" : ""}{" "}
           haben sich bisher angemeldet.
         </div>
+
+        {/* ── FAQ ─────────────────────────────────────────────────────────── */}
+        <RaffleFaq items={raffle.faqItems} />
 
       </div>
     </Layout>

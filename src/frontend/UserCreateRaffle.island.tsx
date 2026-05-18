@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js";
-import { prompts, refreshCurrentPath } from "@valentinkolb/cloud/ui";
+import { prompts } from "@valentinkolb/cloud/ui";
 
-export default function AdminCreateRaffle() {
+export default function UserCreateRaffle() {
   const [showForm, setShowForm] = createSignal(false);
   const [name, setName] = createSignal("");
   const [description, setDescription] = createSignal("");
@@ -16,7 +16,7 @@ export default function AdminCreateRaffle() {
 
     setLoading(true);
     try {
-      const res = await fetch("/api/raffle/admin/raffles", {
+      const res = await fetch("/api/raffle/user/raffles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -30,11 +30,7 @@ export default function AdminCreateRaffle() {
         await prompts.error(body.message ?? "Fehler beim Erstellen.");
         return;
       }
-      setShowForm(false);
-      setName("");
-      setDescription("");
-      setContingent("100");
-      window.location.href = `/admin/raffle/${body.id}`;
+      window.location.href = `/app/raffle/my/${body.id}`;
     } catch {
       await prompts.error("Verbindungsfehler.");
     } finally {
@@ -46,10 +42,7 @@ export default function AdminCreateRaffle() {
     <div class="paper overflow-hidden">
       <div class="px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
         <span class="text-xs font-medium text-dimmed">Neue Verlosung</span>
-        <button
-          class="btn-primary btn-sm"
-          onClick={() => setShowForm((v) => !v)}
-        >
+        <button class="btn-primary btn-sm" onClick={() => setShowForm((v) => !v)}>
           <i class={`ti ${showForm() ? "ti-x" : "ti-plus"} mr-1`} />
           {showForm() ? "Abbrechen" : "Erstellen"}
         </button>
@@ -73,7 +66,7 @@ export default function AdminCreateRaffle() {
             </div>
             <div>
               <label class="block text-xs font-medium text-dimmed mb-1">
-                Kartenkontigent <span class="text-red-500">*</span>
+                Kartenkontingent <span class="text-red-500">*</span>
               </label>
               <input
                 type="number"

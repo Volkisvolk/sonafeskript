@@ -6,9 +6,9 @@ interface Props {
   raffleId: string;
 }
 
-export default function AdminFraudFilter(props: Props) {
+export default function UserFraudFilter(props: Props) {
   const [pairs, { refetch }] = createResource<SimilarNamePair[]>(async () => {
-    const res = await fetch(`/api/raffle/admin/raffles/${props.raffleId}/fraud-filter`);
+    const res = await fetch(`/api/raffle/user/raffles/${props.raffleId}/fraud-filter`);
     if (!res.ok) return [];
     return res.json();
   });
@@ -16,24 +16,16 @@ export default function AdminFraudFilter(props: Props) {
   const [deleting, setDeleting] = createSignal<string | null>(null);
 
   const deleteRegistration = async (id: string, name: string, email: string) => {
-    const reason = await prompts.form({
-      title: "Anmeldung entfernen",
-      icon: "ti ti-trash",
-      fields: {
-        reason: {
-          type: "text",
-          label: "Begründung (wird protokolliert)",
-          required: true,
-          placeholder: "z.B. Doppelte Anmeldung, identisch mit ...",
-        },
-      },
-    });
-    if (!reason) return;
+    const confirmed = await prompts.confirm(
+      `Anmeldung von ${name} (${email}) wirklich löschen?`,
+      { title: "Anmeldung entfernen", confirmLabel: "Ja, löschen" },
+    );
+    if (!confirmed) return;
 
     setDeleting(id);
     try {
       const res = await fetch(
-        `/api/raffle/admin/raffles/${props.raffleId}/registrations/${id}`,
+        `/api/raffle/user/raffles/${props.raffleId}/registrations/${id}`,
         { method: "DELETE" },
       );
       if (!res.ok) {
@@ -41,9 +33,6 @@ export default function AdminFraudFilter(props: Props) {
         await prompts.error(body.message ?? "Fehler beim Löschen.");
         return;
       }
-      await prompts.alert(`Anmeldung von ${name} (${email}) wurde entfernt.`, {
-        title: "Entfernt",
-      });
       refetch();
     } catch {
       await prompts.error("Verbindungsfehler.");
@@ -56,8 +45,7 @@ export default function AdminFraudFilter(props: Props) {
     <div class="flex flex-col gap-3">
       <div class="info-block-warning p-3 text-xs">
         <i class="ti ti-shield-search mr-1" />
-        <strong>Betrugsfilter:</strong> Die folgende Liste zeigt Paare mit ähnlichen Namen (Ähnlichkeit &gt; 45%).
-        Überprüfe diese Paare vor der Verlosung und entferne ggf. Doppelanmeldungen.
+        <strong>Betrugsfilter:</strong> Paare mit ähnlichen Namen (Ähnlichkeit &gt; 45%). Überprüfe diese vor der Verlosung.
       </div>
 
       <Show when={pairs.loading}>
@@ -92,22 +80,10 @@ export default function AdminFraudFilter(props: Props) {
                       <td class="px-3 py-2">
                         <p class="font-medium text-primary">{pair.a.name}</p>
                         <p class="text-dimmed">{pair.a.email}</p>
-                        <a
-                          href={`/admin/raffle/${props.raffleId}/${pair.a.id}`}
-                          class="text-blue-600 hover:underline"
-                        >
-                          Details
-                        </a>
                       </td>
                       <td class="px-3 py-2">
                         <p class="font-medium text-primary">{pair.b.name}</p>
                         <p class="text-dimmed">{pair.b.email}</p>
-                        <a
-                          href={`/admin/raffle/${props.raffleId}/${pair.b.id}`}
-                          class="text-blue-600 hover:underline"
-                        >
-                          Details
-                        </a>
                       </td>
                       <td class="px-3 py-2 text-center">
                         <span
@@ -129,22 +105,14 @@ export default function AdminFraudFilter(props: Props) {
                             disabled={deleting() === pair.a.id}
                             onClick={() => deleteRegistration(pair.a.id, pair.a.name, pair.a.email)}
                           >
-                            {deleting() === pair.a.id ? (
-                              <i class="ti ti-loader-2 animate-spin" />
-                            ) : (
-                              "A löschen"
-                            )}
+                            {deleting() === pair.a.id ? <i class="ti ti-loader-2 animate-spin" /> : "A löschen"}
                           </button>
                           <button
                             class="btn-danger btn-sm"
                             disabled={deleting() === pair.b.id}
                             onClick={() => deleteRegistration(pair.b.id, pair.b.name, pair.b.email)}
                           >
-                            {deleting() === pair.b.id ? (
-                              <i class="ti ti-loader-2 animate-spin" />
-                            ) : (
-                              "B löschen"
-                            )}
+                            {deleting() === pair.b.id ? <i class="ti ti-loader-2 animate-spin" /> : "B löschen"}
                           </button>
                         </div>
                       </td>

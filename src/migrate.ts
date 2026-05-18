@@ -143,6 +143,56 @@ export const migrate = async (): Promise<void> => {
   `.simple();
   console.log("  ✓ raffle.raffles table");
 
+  await sql`
+    ALTER TABLE raffle.raffles
+    ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
+  `.simple();
+  console.log("  ✓ raffle.raffles created_by column");
+
+  await sql`
+    ALTER TABLE raffle.raffles
+    ADD COLUMN IF NOT EXISTS allowed_email_patterns TEXT[] NOT NULL DEFAULT '{}'
+  `.simple();
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'raffle' AND table_name = 'raffles' AND column_name = 'allowed_email_regex'
+      ) THEN
+        UPDATE raffle.raffles
+        SET allowed_email_patterns = ARRAY[allowed_email_regex]
+        WHERE allowed_email_regex IS NOT NULL
+          AND allowed_email_regex <> ''
+          AND array_length(allowed_email_patterns, 1) IS NULL;
+        ALTER TABLE raffle.raffles DROP COLUMN allowed_email_regex;
+      END IF;
+    END $$
+  `.simple();
+  console.log("  ✓ raffle.raffles allowed_email_patterns column");
+
+  // ── Per-Raffle E-Mail-Konfiguration ──────────────────────────────────────
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS reply_to_email TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS win_email_subject TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS win_email_body TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS loss_email_subject TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS loss_email_body TEXT`.simple();
+  console.log("  ✓ raffle.raffles email config columns");
+
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS banner_url TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS banner_position TEXT NOT NULL DEFAULT '50% 50%'`.simple();
+  console.log("  ✓ raffle.raffles banner_url column");
+
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS faq_items TEXT NOT NULL DEFAULT '[]'`.simple();
+  console.log("  ✓ raffle.raffles faq_items column");
+
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS agb_text TEXT`.simple();
+  console.log("  ✓ raffle.raffles agb_text column");
+
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS reg_email_subject TEXT`.simple();
+  await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS reg_email_body TEXT`.simple();
+  console.log("  ✓ raffle.raffles reg_email columns");
+
   // ── raffle_id auf registrations ──────────────────────────────────────────
   await sql`
     ALTER TABLE raffle.registrations

@@ -137,6 +137,19 @@ export const RaffleItemSchema = z.object({
   ticketContingent: z.number(),
   registrationCount: z.number(),
   createdAt: z.string(),
+  createdBy: z.string().uuid().nullable(),
+  allowedEmailPatterns: z.array(z.string()),
+  replyToEmail: z.string().nullable(),
+  winEmailSubject: z.string().nullable(),
+  winEmailBody: z.string().nullable(),
+  lossEmailSubject: z.string().nullable(),
+  lossEmailBody: z.string().nullable(),
+  bannerUrl: z.string().nullable(),
+  bannerPosition: z.string(),
+  faqItems: z.array(z.object({ q: z.string(), a: z.string() })),
+  agbText: z.string().nullable(),
+  regEmailSubject: z.string().nullable(),
+  regEmailBody: z.string().nullable(),
 });
 export type RaffleItem = z.infer<typeof RaffleItemSchema>;
 
@@ -146,6 +159,25 @@ export const CreateRaffleSchema = z.object({
   ticketContingent: z.number().int().positive().default(100),
 });
 export type CreateRaffle = z.infer<typeof CreateRaffleSchema>;
+
+export const UpdateRaffleSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().nullable().optional(),
+  ticketContingent: z.number().int().positive().optional(),
+  allowedEmailPatterns: z.array(z.string()).optional(),
+  replyToEmail: z.string().nullable().optional(),
+  winEmailSubject: z.string().nullable().optional(),
+  winEmailBody: z.string().nullable().optional(),
+  lossEmailSubject: z.string().nullable().optional(),
+  lossEmailBody: z.string().nullable().optional(),
+  bannerUrl: z.string().nullable().optional(),
+  bannerPosition: z.string().optional(),
+  faqItems: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).optional(),
+  agbText: z.string().nullable().optional(),
+  regEmailSubject: z.string().nullable().optional(),
+  regEmailBody: z.string().nullable().optional(),
+});
+export type UpdateRaffle = z.infer<typeof UpdateRaffleSchema>;
 
 // ── Admin Actions ────────────────────────────────────────────────────────────
 

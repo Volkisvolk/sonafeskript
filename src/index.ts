@@ -2,15 +2,14 @@ import { Hono } from "hono";
 import { middleware, type AuthContext } from "@valentinkolb/cloud/server";
 import { app } from "./config";
 import apiRoutes from "./api";
-import pageRoutes, { adminPages as adminPageRoutes } from "./frontend";
+import pageRoutes from "./frontend";
 import { migrate } from "./migrate";
 
 const router = new Hono<AuthContext>()
   .use("*", middleware.runtime())
   .use("*", middleware.settings())
   .route("/api/raffle", apiRoutes)
-  .route("/app/raffle", pageRoutes)
-  .route("/admin/raffle", adminPageRoutes);
+  .route("/app/raffle", pageRoutes);
 
 export default await app.start({
   fetch: router.fetch,
