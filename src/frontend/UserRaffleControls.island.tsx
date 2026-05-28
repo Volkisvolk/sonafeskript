@@ -52,7 +52,7 @@ export default function UserRaffleControls(props: Props) {
             onClick={async () => {
               const ok = await prompts.confirm(
                 "Jetzt verlosen? Die Ergebnisse werden gespeichert, aber Mails werden noch NICHT versendet.",
-                { title: "Verlosung starten", confirmLabel: "Ja, verlosen!" },
+                { title: "Verlosung starten", confirmText: "Ja, verlosen!" },
               );
               if (ok) call("run-raffle");
             }}
@@ -75,7 +75,7 @@ export default function UserRaffleControls(props: Props) {
               onClick={async () => {
                 const ok = await prompts.confirm(
                   "⚠️ Achtung: Nach dem Finalisieren werden alle Gewinn- und Verlier-Mails versendet. Diese Aktion kann nicht rückgängig gemacht werden!",
-                  { title: "Verlosung finalisieren", confirmLabel: "Ja, Mails jetzt senden!", tone: "danger" },
+                  { title: "Verlosung finalisieren", confirmText: "Ja, Mails jetzt senden!", variant: "danger" },
                 );
                 if (ok) call("finalize");
               }}
@@ -94,7 +94,7 @@ export default function UserRaffleControls(props: Props) {
               onClick={async () => {
                 const ok = await prompts.confirm(
                   "Verlosung zurücksetzen? Alle Ergebnisse werden gelöscht und alle Anmeldungen sind wieder 'ausstehend'.",
-                  { title: "Zurücksetzen", confirmLabel: "Ja, zurücksetzen" },
+                  { title: "Zurücksetzen", confirmText: "Ja, zurücksetzen" },
                 );
                 if (ok) call("reset");
               }}

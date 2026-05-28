@@ -5,7 +5,7 @@
 FROM oven/bun:1-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
-RUN bun install --ignore-scripts
+RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
 ENV NODE_ENV=production \

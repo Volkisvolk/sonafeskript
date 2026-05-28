@@ -7,7 +7,7 @@ import RegisterForm from "../RegisterForm.island";
 import RaffleFaq from "../RaffleFaq.island";
 
 export default ssr<AuthContext>(async (c) => {
-  const id = c.req.param("id");
+  const id = c.req.param("id")!;
 
   const raffle = await raffleService.raffles.get(id);
 

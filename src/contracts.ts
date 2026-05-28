@@ -113,16 +113,28 @@ export const ExternalLinkSchema = z.object({
 });
 export type ExternalLink = z.infer<typeof ExternalLinkSchema>;
 
+const safeUrl = (errorMsg?: string) =>
+  z.string().superRefine((val, ctx) => {
+    let url: URL;
+    try { url = new URL(val); } catch {
+      ctx.addIssue({ code: "custom", message: errorMsg ?? "Bitte gib eine gültige URL ein." });
+      return;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      ctx.addIssue({ code: "custom", message: "Nur http:// und https:// URLs sind erlaubt." });
+    }
+  });
+
 export const CreateLinkSchema = z.object({
   label: z.string().min(1, "Bezeichnung ist erforderlich").max(100),
-  url: z.string().url("Bitte gib eine gültige URL ein"),
+  url: safeUrl("Bitte gib eine gültige URL ein"),
   sortOrder: z.number().int().optional(),
 });
 export type CreateLink = z.infer<typeof CreateLinkSchema>;
 
 export const UpdateLinkSchema = z.object({
   label: z.string().min(1).max(100).optional(),
-  url: z.string().url().optional(),
+  url: safeUrl().optional(),
   sortOrder: z.number().int().optional(),
 });
 export type UpdateLink = z.infer<typeof UpdateLinkSchema>;
@@ -164,7 +176,7 @@ export const UpdateRaffleSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().nullable().optional(),
   ticketContingent: z.number().int().positive().optional(),
-  allowedEmailPatterns: z.array(z.string()).optional(),
+  allowedEmailPatterns: z.array(z.string().max(200)).optional(),
   replyToEmail: z.string().nullable().optional(),
   winEmailSubject: z.string().nullable().optional(),
   winEmailBody: z.string().nullable().optional(),

@@ -18,7 +18,7 @@ export default function UserFraudFilter(props: Props) {
   const deleteRegistration = async (id: string, name: string, email: string) => {
     const confirmed = await prompts.confirm(
       `Anmeldung von ${name} (${email}) wirklich löschen?`,
-      { title: "Anmeldung entfernen", confirmLabel: "Ja, löschen" },
+      { title: "Anmeldung entfernen", confirmText: "Ja, löschen" },
     );
     if (!confirmed) return;
 

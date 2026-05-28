@@ -71,7 +71,7 @@ const app = new Hono<AuthContext>()
       responses: { 200: jsonResponse(RaffleStatsSchema, "Statistiken") },
     }),
     async (c) => {
-      const id = c.req.param("id");
+      const id = c.req.param("id")!;
       const raffle = await raffleService.raffles.get(id);
       if (!raffle) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
 
@@ -99,7 +99,7 @@ const app = new Hono<AuthContext>()
     }),
     v("json", RegisterSchema),
     async (c) => {
-      const raffleId = c.req.param("id");
+      const raffleId = c.req.param("id")!;
       const data = c.req.valid("json");
 
       const raffle = await raffleService.raffles.get(raffleId);
@@ -168,6 +168,8 @@ const app = new Hono<AuthContext>()
           creatorRegistrationId: registrationId,
         });
         if (!groupResult.ok) {
+          // Registrierung rückgängig machen damit kein verwaister Eintrag bleibt
+          await raffleService.registrations.remove({ id: registrationId, raffleId });
           return c.json({ error: true, message: groupResult.error }, 500);
         }
         inviteCode = groupResult.data.inviteCode;
@@ -304,7 +306,7 @@ const app = new Hono<AuthContext>()
     }),
     v("json", UpdateLinkSchema),
     async (c) => {
-      const id = c.req.param("id");
+      const id = c.req.param("id")!;
       const data = c.req.valid("json");
       return respond(c, raffleService.links.update({ id, data }));
     },
@@ -321,7 +323,7 @@ const app = new Hono<AuthContext>()
       },
     }),
     async (c) => {
-      const id = c.req.param("id");
+      const id = c.req.param("id")!;
       const result = await raffleService.links.remove({ id });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Link wurde gelöscht." });
@@ -401,7 +403,7 @@ const app = new Hono<AuthContext>()
     v("json", UpdateRaffleSchema),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const data = c.req.valid("json");
@@ -422,7 +424,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffles.remove(raffleId);
@@ -451,7 +453,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const summary = await raffleService.registrations.getAdminSummary({ raffleId });
@@ -468,11 +470,11 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const search = c.req.query("search")?.trim();
-      const filter = c.req.query("filter") as any;
+      const filter = c.req.query("filter") as "won" | "lost" | "pending" | "duplicate_email" | "duplicate_name" | undefined;
       const page = Math.max(1, Number(c.req.query("page") ?? 1));
       const perPage = Math.min(100, Math.max(1, Number(c.req.query("perPage") ?? 50)));
       const result = await raffleService.registrations.listAdmin({ raffleId, search, filter, pagination: { page, perPage } });
@@ -493,11 +495,11 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const reg = await raffleService.registrations.get({ id: regId });
+      const regId = c.req.param("regId")!;
+      const reg = await raffleService.registrations.get({ id: regId, raffleId });
       if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
       const events = await raffleService.tickets.getEvents({ registrationId: regId });
       return c.json({ ...reg, ticketEvents: events });
@@ -518,12 +520,14 @@ const app = new Hono<AuthContext>()
     v("json", UpdateRegistrationSchema),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
+      const regId = c.req.param("regId")!;
+      const scopeCheck = await raffleService.registrations.get({ id: regId, raffleId });
+      if (!scopeCheck) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
       const data = c.req.valid("json");
-      return respond(c, raffleService.registrations.update({ id: regId, data }));
+      return respond(c, raffleService.registrations.update({ id: regId, raffleId, data }));
     },
   )
 
@@ -540,11 +544,11 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.registrations.remove({ id: regId });
+      const regId = c.req.param("regId")!;
+      const result = await raffleService.registrations.remove({ id: regId, raffleId });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Anmeldung wurde gelöscht." });
     },
@@ -563,11 +567,11 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const reg = await raffleService.registrations.get({ id: regId });
+      const regId = c.req.param("regId")!;
+      const reg = await raffleService.registrations.get({ id: regId, raffleId });
       if (!reg) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
       const oldGroupId = reg.groupId;
       const result = await raffleService.registrations.updateGroup({ id: regId, groupId: null });
@@ -590,7 +594,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.runRaffle(raffleId);
@@ -612,7 +616,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.finalizeRaffle(raffleId);
@@ -634,7 +638,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.resetRaffle(raffleId);
@@ -652,11 +656,12 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.tickets.markPaid({ registrationId: regId, performedBy: user?.email });
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const result = await raffleService.tickets.markPaid({ registrationId: regId, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Als bezahlt markiert." });
     },
@@ -671,11 +676,12 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.tickets.revertPaid({ registrationId: regId, performedBy: user?.email });
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const result = await raffleService.tickets.revertPaid({ registrationId: regId, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Bezahlung wurde zurückgesetzt." });
     },
@@ -690,11 +696,12 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.tickets.markCollected({ registrationId: regId, performedBy: user?.email });
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const result = await raffleService.tickets.markCollected({ registrationId: regId, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Okily Dokily! Als abgeholt markiert." });
     },
@@ -709,11 +716,12 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.tickets.revertCollected({ registrationId: regId, performedBy: user?.email });
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const result = await raffleService.tickets.revertCollected({ registrationId: regId, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Abholung wurde zurückgesetzt." });
     },
@@ -729,12 +737,13 @@ const app = new Hono<AuthContext>()
     v("json", ProxyCollectSchema),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
       const { collectedByEmail } = c.req.valid("json");
-      const result = await raffleService.tickets.markCollectedByProxy({ registrationId: regId, collectedByEmail, performedBy: user?.email });
+      const result = await raffleService.tickets.markCollectedByProxy({ registrationId: regId, collectedByEmail, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: `Karten wurden von ${collectedByEmail} per Vollmacht abgeholt.` });
     },
@@ -750,12 +759,13 @@ const app = new Hono<AuthContext>()
     v("json", AdjustTicketsSchema),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
       const { wonTickets } = c.req.valid("json");
-      const result = await raffleService.tickets.adjustTickets({ registrationId: regId, wonTickets, performedBy: user?.email });
+      const result = await raffleService.tickets.adjustTickets({ registrationId: regId, wonTickets, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: `Karten angepasst auf ${wonTickets}.` });
     },
@@ -771,11 +781,11 @@ const app = new Hono<AuthContext>()
     v("json", RemoveWithReasonSchema),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const regId = c.req.param("regId");
-      const result = await raffleService.registrations.remove({ id: regId });
+      const regId = c.req.param("regId")!;
+      const result = await raffleService.registrations.remove({ id: regId, raffleId });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Anmeldung wurde entfernt." });
     },
@@ -790,7 +800,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const user = c.get("user")!;
-      const raffleId = c.req.param("raffleId");
+      const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const pairs = await raffleService.registrations.findSimilarNames({ raffleId });

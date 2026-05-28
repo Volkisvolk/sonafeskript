@@ -7,7 +7,6 @@ export const app = defineApp({
   description: "Registrierung und Ticketverwaltung für Verlosungen.",
   basePath: "/app/raffle",
   baseUrl: "http://app-raffle:3000",
-  adminHref: "/admin/raffle",
   nav: {
     href: "/app/raffle",
     match: "/app/raffle",
@@ -16,7 +15,7 @@ export const app = defineApp({
   },
   widgets: [{ id: "stats", path: "/api/raffle/widget/stats" }],
   openapi: "/api/raffle/openapi.json",
-  routes: ["/api/raffle", "/app/raffle", "/admin/raffle", "/public/raffle"],
+  routes: ["/api/raffle", "/app/raffle", "/public/raffle"],
   settings: {
     "raffle.ticket_contingent": {
       kind: "number",

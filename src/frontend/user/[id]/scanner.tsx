@@ -6,7 +6,7 @@ import UserQrScanner from "../../UserQrScanner.island";
 
 export default ssr<AuthContext>(async (c) => {
   const user = c.get("user")!;
-  const raffleId = c.req.param("id");
+  const raffleId = c.req.param("id")!;
   const raffle = await raffleService.raffles.get(raffleId);
 
   if (!raffle || raffle.createdBy !== user.id) {

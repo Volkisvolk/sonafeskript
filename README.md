@@ -19,7 +19,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Open <http://localhost:3000/auth/login?method=admin> and enter `dev-admin` as the token. You'll land in `/app/dashboard`. The example app sits at `/app/expeditions` and `/admin/expeditions`.
+Open <http://localhost:3000/auth/login?method=admin> and enter `dev-admin` as the token. You'll land in `/app/dashboard`. The raffle app sits at `/app/raffle`.
 
 To stop: `docker compose down`. To wipe data: `docker compose down -v`.
 
@@ -28,7 +28,7 @@ To stop: `docker compose down`. To wipe data: `docker compose down -v`.
 ```bash
 bun install                                 # local deps for IDE / typecheck
 bun run dev                                 # standalone, no platform on :3000
-docker compose up -d --build app-expeditions   # with the platform stack
+docker compose up -d --build app-raffle         # with the platform stack
 ```
 
 ---

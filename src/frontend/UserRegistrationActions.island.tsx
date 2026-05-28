@@ -23,7 +23,7 @@ export default function UserRegistrationActions(props: Props) {
   const handlePaid = async () => {
     const ok = await prompts.confirm("Karten als bezahlt markieren?", {
       title: "Bezahlung bestätigen",
-      confirmLabel: "Ja, bezahlt!",
+      confirmText: "Ja, bezahlt!",
     });
     if (!ok) return;
 

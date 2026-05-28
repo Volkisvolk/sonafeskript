@@ -13,94 +13,119 @@ const log = logger("raffle");
 export const runRaffle = async (
   raffleId: string,
 ): Promise<MutationResult<{ winners: number; losers: number; contingent: number }>> => {
-  const status = await rafflesService.getStatus(raffleId);
-  if (status !== "open") {
+  // Atomic claim: setzt status auf 'raffled' genau dann wenn er noch 'open' ist.
+  // Zwei gleichzeitige Requests: nur einer bekommt eine Zeile zurück.
+  const [claimed] = await sql<{ ticket_contingent: number }[]>`
+    UPDATE raffle.raffles SET status = 'raffled', updated_at = now()
+    WHERE id = ${raffleId}::uuid AND status = 'open'
+    RETURNING ticket_contingent
+  `;
+  if (!claimed) {
     return { ok: false, error: "Die Verlosung kann nur im Status 'Offen' gestartet werden.", status: 400 };
   }
+  const contingent = claimed.ticket_contingent;
 
-  const [contingentRow] = await sql<{ ticket_contingent: number }[]>`
-    SELECT ticket_contingent FROM raffle.raffles WHERE id = ${raffleId}::uuid
-  `;
-  const contingent = contingentRow?.ticket_contingent ?? 100;
-
-  const allPending = await registrationsService.listAllRaw({ raffleId });
-  if (allPending.length === 0) {
-    return { ok: false, error: "Keine Anmeldungen vorhanden.", status: 400 };
-  }
-
-  const groups = await groupsService.listGroupsWithMembers({ raffleId });
-  const inGroupIds = new Set(groups.flatMap((g) => g.members.map((m) => m.id)));
-
-  type Unit =
-    | { type: "solo"; id: string; requestedTickets: number }
-    | { type: "group"; groupId: string; members: { id: string; requestedTickets: number }[] };
-
-  const units: Unit[] = [];
-
-  for (const r of allPending) {
-    if (!inGroupIds.has(r.id)) {
-      units.push({ type: "solo", id: r.id, requestedTickets: r.requested_tickets });
+  try {
+    const allPending = await registrationsService.listAllRaw({ raffleId });
+    if (allPending.length === 0) {
+      await rafflesService.setStatus(raffleId, "open");
+      return { ok: false, error: "Keine Anmeldungen vorhanden.", status: 400 };
     }
-  }
 
-  for (const g of groups) {
-    units.push({ type: "group", groupId: g.groupId, members: g.members });
-  }
+    const groups = await groupsService.listGroupsWithMembers({ raffleId });
+    const inGroupIds = new Set(groups.flatMap((g) => g.members.map((m) => m.id)));
 
-  for (let i = units.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [units[i], units[j]] = [units[j], units[i]];
-  }
+    type Unit =
+      | { type: "solo"; id: string; requestedTickets: number }
+      | { type: "group"; groupId: string; members: { id: string; requestedTickets: number }[] };
 
-  let remaining = contingent;
-  const winners: string[] = [];
-  const losers: string[] = [];
+    const units: Unit[] = [];
 
-  for (const unit of units) {
-    if (unit.type === "solo") {
-      const needed = unit.requestedTickets;
-      if (remaining >= needed) {
-        winners.push(unit.id);
-        remaining -= needed;
-      } else {
-        losers.push(unit.id);
-      }
-    } else {
-      const totalNeeded = unit.members.reduce((sum, m) => sum + m.requestedTickets, 0);
-      if (remaining >= totalNeeded) {
-        for (const m of unit.members) winners.push(m.id);
-        remaining -= totalNeeded;
-      } else {
-        for (const m of unit.members) losers.push(m.id);
+    for (const r of allPending) {
+      if (!inGroupIds.has(r.id)) {
+        units.push({ type: "solo", id: r.id, requestedTickets: r.requested_tickets });
       }
     }
+
+    for (const g of groups) {
+      units.push({ type: "group", groupId: g.groupId, members: g.members });
+    }
+
+    for (let i = units.length - 1; i > 0; i--) {
+      const [rand] = crypto.getRandomValues(new Uint32Array(1));
+      const j = Math.floor((rand / 0x100000000) * (i + 1));
+      [units[i], units[j]] = [units[j], units[i]];
+    }
+
+    let remaining = contingent;
+    const winners: string[] = [];
+    const losers: string[] = [];
+
+    for (const unit of units) {
+      if (unit.type === "solo") {
+        const needed = unit.requestedTickets;
+        if (remaining >= needed) {
+          winners.push(unit.id);
+          remaining -= needed;
+        } else {
+          losers.push(unit.id);
+        }
+      } else {
+        const totalNeeded = unit.members.reduce((sum, m) => sum + m.requestedTickets, 0);
+        if (remaining >= totalNeeded) {
+          for (const m of unit.members) winners.push(m.id);
+          remaining -= totalNeeded;
+        } else {
+          for (const m of unit.members) losers.push(m.id);
+        }
+      }
+    }
+
+    const wonTicketsMap = new Map<string, number>();
+    const tokensMap = new Map<string, string>();
+
+    for (const id of winners) {
+      const reg = allPending.find((r) => r.id === id);
+      wonTicketsMap.set(id, reg?.requested_tickets ?? 1);
+      const bytes = crypto.getRandomValues(new Uint8Array(24));
+      const token = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+      tokensMap.set(id, token);
+    }
+
+    // Alle Schreiboperationen in einer Transaction: entweder alles oder nichts.
+    // status = 'raffled' wurde bereits atomar gesetzt, hier nur Registrierungen.
+    await sql.begin(async (tx) => {
+      for (const id of winners) {
+        await tx`
+          UPDATE raffle.registrations
+          SET status = 'won', won_tickets = ${wonTicketsMap.get(id) ?? 1}, qr_token = ${tokensMap.get(id) ?? ""}
+          WHERE id = ${id}::uuid
+        `;
+      }
+      for (const id of losers) {
+        await tx`UPDATE raffle.registrations SET status = 'lost' WHERE id = ${id}::uuid`;
+      }
+    });
+
+    log.info("raffle.completed", {
+      raffleId,
+      winners: winners.length,
+      losers: losers.length,
+      contingentUsed: contingent - remaining,
+      contingent,
+    });
+
+    return {
+      ok: true,
+      data: { winners: winners.length, losers: losers.length, contingent },
+    };
+  } catch (e: any) {
+    // Bei einem unerwarteten Fehler: Status zurücksetzen damit die Verlosung
+    // erneut gestartet werden kann.
+    await rafflesService.setStatus(raffleId, "open").catch(() => {});
+    log.error("raffle.run.failed", { raffleId, message: e?.message });
+    return { ok: false, error: "Die Verlosung ist fehlgeschlagen und wurde zurückgesetzt.", status: 500 };
   }
-
-  const wonTicketsMap = new Map<string, number>();
-  const tokensMap = new Map<string, string>();
-
-  for (const id of winners) {
-    const reg = allPending.find((r) => r.id === id);
-    wonTicketsMap.set(id, reg?.requested_tickets ?? 1);
-    tokensMap.set(id, `RAFFLE-${id}`);
-  }
-
-  await registrationsService.markWon({ ids: winners, wonTickets: wonTicketsMap, tokens: tokensMap });
-  await registrationsService.markLost({ ids: losers });
-  await rafflesService.setStatus(raffleId, "raffled");
-
-  log.info("raffle.completed", {
-    raffleId,
-    winners: winners.length,
-    losers: losers.length,
-    contingentUsed: contingent - remaining,
-    contingent,
-  });
-
-  return {
-    ok: true,
-    data: { winners: winners.length, losers: losers.length, contingent },
-  };
 };
 
 // ── Reset Raffle ──────────────────────────────────────────────────────────────
@@ -172,9 +197,10 @@ export const finalizeRaffle = async (
         const qrData = reg.qrToken ?? reg.id;
         const qrDataUrl = await QRCode.toDataURL(qrData, { width: 200, margin: 1 });
 
+        const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         const rawHtml = `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-            <p style="white-space:pre-wrap">${bodyText.replace(/</g, "&lt;")}</p>
+            <p style="white-space:pre-wrap">${escHtml(bodyText)}</p>
             <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
             <p style="color:#666;font-size:14px">Dein QR-Code für die Kartenabholung:</p>
             <img src="${qrDataUrl}" alt="QR-Code" style="width:200px;height:200px;display:block;margin:8px 0"/>

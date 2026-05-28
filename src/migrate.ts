@@ -249,4 +249,33 @@ export const migrate = async (): Promise<void> => {
     ON raffle.registrations(raffle_id, LOWER(email))
   `.simple();
   console.log("  ✓ email unique per raffle");
+
+  // ── NOT NULL auf raffle_id (nach Backfill sicher) ─────────────────────────
+  // Nur ausführen wenn noch keine NOT NULL Constraint existiert, um idempotent
+  // zu bleiben. Der Backfill oben stellt sicher dass keine NULLs mehr da sind.
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'raffle' AND table_name = 'registrations'
+          AND column_name = 'raffle_id' AND is_nullable = 'YES'
+      ) THEN
+        ALTER TABLE raffle.registrations ALTER COLUMN raffle_id SET NOT NULL;
+      END IF;
+    END $$
+  `.simple();
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'raffle' AND table_name = 'groups'
+          AND column_name = 'raffle_id' AND is_nullable = 'YES'
+      ) THEN
+        ALTER TABLE raffle.groups ALTER COLUMN raffle_id SET NOT NULL;
+      END IF;
+    END $$
+  `.simple();
+  console.log("  ✓ raffle_id NOT NULL");
 };

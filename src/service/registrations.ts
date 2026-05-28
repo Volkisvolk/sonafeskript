@@ -133,32 +133,49 @@ export const create = async (params: {
     };
   }
 
-  if (groupId) {
-    const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
-    const [countRow] = await sql<{ count: number }[]>`
-      SELECT COUNT(*)::int AS count FROM raffle.registrations
-      WHERE group_id = ${groupId}::uuid AND raffle_id = ${raffleId}::uuid
-    `;
-    if ((countRow?.count ?? 0) >= maxGroupSize) {
+  const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
+
+  // Gruppengröße-Check und INSERT in einer Transaction mit Row-Lock,
+  // damit parallele Requests die Gruppe nicht überfüllen können.
+  let row: DbRegistration | undefined;
+  try {
+    const rows = await sql.begin(async (tx) => {
+      if (groupId) {
+        // Sperrt die Gruppe-Zeile für die Dauer der Transaction
+        await tx`SELECT id FROM raffle.groups WHERE id = ${groupId}::uuid FOR UPDATE`;
+        const [countRow] = await tx<{ count: number }[]>`
+          SELECT COUNT(*)::int AS count FROM raffle.registrations
+          WHERE group_id = ${groupId}::uuid AND raffle_id = ${raffleId}::uuid
+        `;
+        if ((countRow?.count ?? 0) >= maxGroupSize) {
+          const err: any = new Error("GROUP_FULL");
+          err.maxGroupSize = maxGroupSize;
+          throw err;
+        }
+      }
+      return tx<DbRegistration[]>`
+        INSERT INTO raffle.registrations
+          (name, email, requested_tickets, accepted_agb, group_id, raffle_id)
+        VALUES
+          (${data.name}, ${data.email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid)
+        RETURNING
+          id, name, email, requested_tickets, accepted_agb,
+          group_id, NULL AS group_name, NULL AS group_invite_code,
+          status, won_tickets, qr_token,
+          paid_at, collected_at, collected_by, created_at
+      `;
+    });
+    [row] = rows;
+  } catch (e: any) {
+    if (e.message === "GROUP_FULL") {
       return {
         ok: false,
-        error: `Die Gruppe hat bereits die maximale Größe von ${maxGroupSize} Personen erreicht.`,
+        error: `Die Gruppe hat bereits die maximale Größe von ${e.maxGroupSize} Personen erreicht.`,
         status: 400,
       };
     }
+    throw e;
   }
-
-  const [row] = await sql<DbRegistration[]>`
-    INSERT INTO raffle.registrations
-      (name, email, requested_tickets, accepted_agb, group_id, raffle_id)
-    VALUES
-      (${data.name}, ${data.email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid)
-    RETURNING
-      id, name, email, requested_tickets, accepted_agb,
-      group_id, NULL AS group_name, NULL AS group_invite_code,
-      status, won_tickets, qr_token,
-      paid_at, collected_at, collected_by, created_at
-  `;
   if (!row) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
 
   const finalRow = await get({ id: row.id });
@@ -168,12 +185,13 @@ export const create = async (params: {
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 
-export const get = async (params: { id: string }): Promise<Registration | null> => {
+export const get = async (params: { id: string; raffleId?: string }): Promise<Registration | null> => {
   const [row] = await sql<DbRegistration[]>`
     SELECT ${SELECT_COLS}
     FROM raffle.registrations r
     ${WITH_GROUP_SQL}
     WHERE r.id = ${params.id}::uuid
+      AND (${params.raffleId ?? null}::uuid IS NULL OR r.raffle_id = ${params.raffleId ?? null}::uuid)
   `;
   return row ? mapRegistration(row) : null;
 };
@@ -289,6 +307,7 @@ export const listAdmin = async (params: {
 
 export const update = async (params: {
   id: string;
+  raffleId?: string;
   data: UpdateRegistration;
 }): Promise<MutationResult<Registration>> => {
   const existing = await get({ id: params.id });
@@ -304,6 +323,7 @@ export const update = async (params: {
     const [dup] = await sql<{ id: string }[]>`
       SELECT id FROM raffle.registrations
       WHERE LOWER(email) = LOWER(${email}) AND id != ${params.id}::uuid
+        AND (${params.raffleId ?? null}::uuid IS NULL OR raffle_id = ${params.raffleId ?? null}::uuid)
     `;
     if (dup) return { ok: false, error: "Diese E-Mail-Adresse ist bereits vergeben.", status: 409 };
   }
@@ -333,8 +353,12 @@ export const updateGroup = async (params: {
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-export const remove = async (params: { id: string }): Promise<MutationResult<void>> => {
-  const result = await sql`DELETE FROM raffle.registrations WHERE id = ${params.id}::uuid`;
+export const remove = async (params: { id: string; raffleId?: string }): Promise<MutationResult<void>> => {
+  const result = await sql`
+    DELETE FROM raffle.registrations
+    WHERE id = ${params.id}::uuid
+      AND (${params.raffleId ?? null}::uuid IS NULL OR raffle_id = ${params.raffleId ?? null}::uuid)
+  `;
   if (result.count === 0) return { ok: false, error: "Anmeldung nicht gefunden.", status: 404 };
   return { ok: true, data: undefined };
 };

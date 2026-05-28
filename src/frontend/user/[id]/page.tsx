@@ -26,7 +26,7 @@ const STATUS_CLASS: Record<string, string> = {
 
 export default ssr<AuthContext>(async (c) => {
   const user = c.get("user")!;
-  const raffleId = c.req.param("id");
+  const raffleId = c.req.param("id")!;
 
   const raffle = await raffleService.raffles.get(raffleId);
 
@@ -143,7 +143,7 @@ export default ssr<AuthContext>(async (c) => {
                 label="Abgeholt"
                 value={summary.collected}
                 sub={summary.won > 0 ? `von ${summary.won} Gewinnern` : "noch keine"}
-                accent={{ tone: "purple", icon: "ti ti-package-check" }}
+                accent={{ tone: "zinc", icon: "ti ti-package-check" }}
               />
               <StatCell
                 label="Kontingent"

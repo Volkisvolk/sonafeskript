@@ -180,9 +180,8 @@ export default function UserQrScanner(props: Props) {
         </Show>
 
         {/* Result */}
-        <Show when={phase() === "result" && result() !== null}>
-          {() => {
-            const reg = result()!;
+        <Show when={phase() === "result" ? result() : null} keyed>
+          {(reg) => {
             const paid = !!reg.paidAt;
             return (
               <div class="w-full max-w-sm flex flex-col gap-3">
@@ -247,6 +246,7 @@ export default function UserQrScanner(props: Props) {
             );
           }}
         </Show>
+
 
         {/* Error */}
         <Show when={phase() === "error"}>
