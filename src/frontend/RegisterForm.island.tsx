@@ -1,5 +1,6 @@
 import { createSignal, createResource, Show } from "solid-js";
 import { prompts } from "@valentinkolb/cloud/ui";
+import { parseLinks } from "./lib/links";
 
 interface Props {
   raffleId: string;
@@ -186,9 +187,9 @@ export default function RegisterForm(props: Props) {
               ))}
             </div>
             <Show when={props.remaining < 2 && tickets() === 2}>
-              <p class="text-xs text-amber-600 mt-1">
-                <i class="ti ti-alert-triangle mr-1" />
-                Es sind möglicherweise nicht mehr genug Karten für 2 Stück vorhanden.
+              <p class="text-xs text-dimmed mt-1">
+                <i class="ti ti-info-circle mr-1" />
+                Das Kartenkontingent ist fast ausgeschöpft — du kannst dich trotzdem anmelden. Bei der Verlosung entscheidet das Los, wer Karten erhält.
               </p>
             </Show>
           </div>
@@ -271,7 +272,7 @@ export default function RegisterForm(props: Props) {
                 checked={agb()}
                 onChange={(e) => setAgb(e.currentTarget.checked)}
               />
-              <span class="text-xs text-dimmed leading-relaxed">{props.agbText}</span>
+              <span class="text-xs text-dimmed leading-relaxed" innerHTML={parseLinks(props.agbText)} />
             </label>
           </div>
 

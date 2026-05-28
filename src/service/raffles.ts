@@ -9,6 +9,7 @@ type DbRaffle = {
   status: string;
   ticket_contingent: number;
   registration_count: number;
+  total_requested_tickets: number;
   created_at: Date;
   created_by: string | null;
   allowed_email_patterns: string[];
@@ -32,6 +33,7 @@ const mapRaffle = (r: DbRaffle): RaffleItem => ({
   status: r.status as RaffleStatus,
   ticketContingent: r.ticket_contingent,
   registrationCount: r.registration_count,
+  totalRequestedTickets: r.total_requested_tickets,
   createdAt: r.created_at.toISOString(),
   createdBy: r.created_by,
   allowedEmailPatterns: r.allowed_email_patterns ?? [],
@@ -52,10 +54,10 @@ const toPgTextArray = (arr: string[]) =>
   "{" + arr.map((s) => '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"').join(",") + "}";
 
 const WITH_COUNT = sql`
-  SELECT r.*, COALESCE(rc.cnt, 0)::int AS registration_count
+  SELECT r.*, COALESCE(rc.cnt, 0)::int AS registration_count, COALESCE(rc.requested, 0)::int AS total_requested_tickets
   FROM raffle.raffles r
   LEFT JOIN (
-    SELECT raffle_id, COUNT(*)::int AS cnt
+    SELECT raffle_id, COUNT(*)::int AS cnt, COALESCE(SUM(requested_tickets), 0)::int AS requested
     FROM raffle.registrations
     GROUP BY raffle_id
   ) rc ON rc.raffle_id = r.id
@@ -68,6 +70,15 @@ export const create = async (data: CreateRaffle, createdBy?: string): Promise<Mu
     RETURNING id
   `;
   if (!row) return { ok: false, error: "Verlosung konnte nicht erstellt werden.", status: 500 };
+
+  if (createdBy) {
+    await sql`
+      INSERT INTO raffle.raffle_members (raffle_id, user_id, role)
+      VALUES (${row.id}::uuid, ${createdBy}::uuid, 'owner')
+      ON CONFLICT DO NOTHING
+    `;
+  }
+
   const item = await get(row.id);
   if (!item) return { ok: false, error: "Verlosung konnte nicht geladen werden.", status: 500 };
   return { ok: true, data: item };

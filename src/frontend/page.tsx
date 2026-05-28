@@ -2,6 +2,7 @@ import { ssr } from "../config";
 import { type AuthContext } from "@valentinkolb/cloud/server";
 import { Layout } from "@valentinkolb/cloud/ssr";
 import { raffleService } from "@/service";
+import { parseLinks } from "./lib/links";
 
 export default ssr<AuthContext>(async (c) => {
   const user = c.get("user");
@@ -37,8 +38,9 @@ export default ssr<AuthContext>(async (c) => {
             {raffles.map((raffle) => {
               const pct = raffle.ticketContingent === 0
                 ? 0
-                : Math.min(100, Math.round((raffle.registrationCount / raffle.ticketContingent) * 100));
-              const remaining = Math.max(0, raffle.ticketContingent - raffle.registrationCount);
+                : Math.min(100, Math.round((raffle.totalRequestedTickets / raffle.ticketContingent) * 100));
+              const remaining = Math.max(0, raffle.ticketContingent - raffle.totalRequestedTickets);
+              const overbooked = raffle.totalRequestedTickets >= raffle.ticketContingent;
 
               return (
                 <div class="paper overflow-hidden">
@@ -50,7 +52,7 @@ export default ssr<AuthContext>(async (c) => {
                     <div>
                       <h2 class="text-base font-semibold text-primary">{raffle.name}</h2>
                       {raffle.description ? (
-                        <p class="text-sm text-dimmed mt-1">{raffle.description}</p>
+                        <p class="text-sm text-dimmed mt-1" innerHTML={parseLinks(raffle.description)} />
                       ) : null}
                     </div>
                     <span class="text-xs font-medium px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 shrink-0">
@@ -61,17 +63,27 @@ export default ssr<AuthContext>(async (c) => {
 
                   <div class="flex items-end justify-between gap-2 mb-2">
                     <div>
-                      <span class="text-xl font-bold text-primary">{raffle.registrationCount}</span>
-                      <span class="text-sm text-dimmed ml-1">von {raffle.ticketContingent} Plätzen belegt</span>
+                      <span class="text-xl font-bold text-primary">{raffle.totalRequestedTickets}</span>
+                      <span class="text-sm text-dimmed ml-1">von {raffle.ticketContingent} Karten angefordert</span>
                     </div>
-                    <span class="text-sm text-dimmed">{remaining} frei</span>
+                    <span class="text-sm text-dimmed">
+                      {overbooked ? "Anmeldung offen" : `${remaining} frei`}
+                    </span>
                   </div>
-                  <div class="w-full h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden mb-4">
+                  <div class="w-full h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden mb-2">
                     <div
-                      class={`h-full rounded-full transition-all ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-blue-500"}`}
+                      class={`h-full rounded-full transition-all ${overbooked ? "bg-blue-500" : pct >= 90 ? "bg-amber-500" : "bg-blue-500"}`}
                       style={`width: ${pct}%`}
                     />
                   </div>
+                  {overbooked ? (
+                    <div class="info-block-info px-3 py-2 mb-3 text-xs flex items-center gap-2">
+                      <i class="ti ti-arrow-shuffle shrink-0" />
+                      <span>Es haben sich mehr Personen angemeldet als Karten vorhanden sind — das ist normal und gewollt. Du kannst dich trotzdem anmelden! Wer eine Karte erhält, wird anschließend per Verlosung zufällig ausgewählt.</span>
+                    </div>
+                  ) : (
+                    <div class="mb-4" />
+                  )}
 
                   <a
                     href={`/app/raffle/${raffle.id}`}

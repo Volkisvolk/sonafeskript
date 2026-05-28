@@ -148,6 +148,7 @@ export const RaffleItemSchema = z.object({
   status: RaffleStatusSchema,
   ticketContingent: z.number(),
   registrationCount: z.number(),
+  totalRequestedTickets: z.number(),
   createdAt: z.string(),
   createdBy: z.string().uuid().nullable(),
   allowedEmailPatterns: z.array(z.string()),
@@ -237,6 +238,23 @@ export const AdminRegistrationSchema = RegistrationSchema.extend({
   ticketEvents: z.array(TicketEventSchema).optional(),
 });
 export type AdminRegistration = z.infer<typeof AdminRegistrationSchema>;
+
+// ── Raffle Members ───────────────────────────────────────────────────────────
+
+export const RaffleMemberSchema = z.object({
+  userId: z.string().uuid(),
+  role: z.enum(["owner", "moderator"]),
+  displayName: z.string().nullable(),
+  mail: z.string().nullable(),
+  addedAt: z.string(),
+});
+export type RaffleMember = z.infer<typeof RaffleMemberSchema>;
+
+export const AddMemberSchema = z.object({
+  email: z.string().email("Bitte gib eine gültige E-Mail-Adresse ein"),
+  role: z.enum(["owner", "moderator"]).default("moderator"),
+});
+export type AddMember = z.infer<typeof AddMemberSchema>;
 
 // ── Standard envelopes ───────────────────────────────────────────────────────
 

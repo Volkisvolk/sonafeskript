@@ -398,6 +398,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
   collected: number;
   totalRequestedTickets: number;
   totalWonTickets: number;
+  totalCollectedTickets: number;
 }> => {
   const [row] = await sql<{
     total: number;
@@ -408,6 +409,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     collected: number;
     total_requested: number;
     total_won: number;
+    total_collected_tickets: number;
   }[]>`
     SELECT
       COUNT(*)::int AS total,
@@ -417,7 +419,8 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
       COUNT(*) FILTER (WHERE paid_at IS NOT NULL)::int AS paid,
       COUNT(*) FILTER (WHERE collected_at IS NOT NULL)::int AS collected,
       COALESCE(SUM(requested_tickets), 0)::int AS total_requested,
-      COALESCE(SUM(won_tickets), 0)::int AS total_won
+      COALESCE(SUM(won_tickets), 0)::int AS total_won,
+      COALESCE(SUM(won_tickets) FILTER (WHERE collected_at IS NOT NULL), 0)::int AS total_collected_tickets
     FROM raffle.registrations
     WHERE raffle_id = ${params.raffleId}::uuid
   `;
@@ -430,6 +433,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     collected: row?.collected ?? 0,
     totalRequestedTickets: row?.total_requested ?? 0,
     totalWonTickets: row?.total_won ?? 0,
+    totalCollectedTickets: row?.total_collected_tickets ?? 0,
   };
 };
 

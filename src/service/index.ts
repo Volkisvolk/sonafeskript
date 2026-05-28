@@ -5,6 +5,7 @@ import * as tickets from "./tickets";
 import * as state from "./state";
 import * as links from "./links";
 import * as raffles from "./raffles";
+import * as members from "./members";
 
 export const raffleService = {
   registrations,
@@ -14,4 +15,5 @@ export const raffleService = {
   state,
   links,
   raffles,
+  members,
 };

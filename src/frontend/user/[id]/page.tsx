@@ -49,7 +49,7 @@ export default ssr<AuthContext>(async (c) => {
   const search = (c.req.query("search") ?? "").trim();
   const filter = c.req.query("filter") as "won" | "lost" | "pending" | undefined;
 
-  const [summary, registrations, defaultAgbText, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
+  const [summary, registrations, members, currentUserRole, defaultAgbText, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
     raffleService.registrations.getAdminSummary({ raffleId }),
     raffleService.registrations.listAdmin({
       raffleId,
@@ -57,6 +57,8 @@ export default ssr<AuthContext>(async (c) => {
       filter,
       pagination: { page, perPage: PER_PAGE },
     }),
+    raffleService.members.list({ raffleId }),
+    raffleService.members.getRole({ raffleId, userId: user.id }),
     settings.get<string>("raffle.agb_text"),
     settings.get<string>("raffle.reply_to_email"),
     settings.get<string>("raffle.reg_email_subject"),
@@ -141,8 +143,8 @@ export default ssr<AuthContext>(async (c) => {
               />
               <StatCell
                 label="Abgeholt"
-                value={summary.collected}
-                sub={summary.won > 0 ? `von ${summary.won} Gewinnern` : "noch keine"}
+                value={`${summary.totalCollectedTickets} / ${summary.totalWonTickets}`}
+                sub={`${summary.collected} von ${summary.won} Personen`}
                 accent={{ tone: "zinc", icon: "ti ti-package-check" }}
               />
               <StatCell
@@ -152,6 +154,23 @@ export default ssr<AuthContext>(async (c) => {
                 accent={{ tone: "amber", icon: "ti ti-ticket" }}
               />
             </div>
+            {summary.totalWonTickets > 0 ? (
+              <div class="px-3 py-2 border-t border-zinc-100 dark:border-zinc-800">
+                <div class="flex items-center justify-between text-xs text-dimmed mb-1">
+                  <span>Abholfortschritt</span>
+                  <span class="font-medium text-primary">
+                    {summary.totalCollectedTickets} / {summary.totalWonTickets} Tickets
+                    {" "}({Math.round((summary.totalCollectedTickets / summary.totalWonTickets) * 100)}%)
+                  </span>
+                </div>
+                <div class="w-full h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-zinc-500 dark:bg-zinc-400 transition-all"
+                    style={`width: ${Math.round((summary.totalCollectedTickets / summary.totalWonTickets) * 100)}%`}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* ── Verlosungssteuerung ──────────────────────────────────────────── */}
@@ -188,6 +207,9 @@ export default ssr<AuthContext>(async (c) => {
               lossEmailSubject: raffle.lossEmailSubject,
               lossEmailBody: raffle.lossEmailBody,
             }}
+            members={members}
+            currentUserRole={currentUserRole ?? "moderator"}
+            currentUserId={user.id}
           />
 
           {/* ── Tabs ─────────────────────────────────────────────────────────── */}

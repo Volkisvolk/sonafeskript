@@ -41,6 +41,34 @@ export default function UserFraudFilter(props: Props) {
     }
   };
 
+  const deleteBoth = async (pair: SimilarNamePair) => {
+    const confirmed = await prompts.confirm(
+      `Beide Anmeldungen löschen?\n\nA: ${pair.a.name} (${pair.a.email})\nB: ${pair.b.name} (${pair.b.email})`,
+      { title: "Beide entfernen", confirmText: "Ja, beide löschen", variant: "danger" },
+    );
+    if (!confirmed) return;
+
+    setDeleting(pair.a.id);
+    try {
+      for (const id of [pair.a.id, pair.b.id]) {
+        const res = await fetch(
+          `/api/raffle/user/raffles/${props.raffleId}/registrations/${id}`,
+          { method: "DELETE" },
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          await prompts.error(body.message ?? "Fehler beim Löschen.");
+          return;
+        }
+      }
+      refetch();
+    } catch {
+      await prompts.error("Verbindungsfehler.");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   return (
     <div class="flex flex-col gap-3">
       <div class="info-block-warning p-3 text-xs">
@@ -99,20 +127,27 @@ export default function UserFraudFilter(props: Props) {
                         </span>
                       </td>
                       <td class="px-3 py-2">
-                        <div class="flex gap-1">
+                        <div class="flex gap-1 flex-wrap">
                           <button
                             class="btn-danger btn-sm"
-                            disabled={deleting() === pair.a.id}
+                            disabled={!!deleting()}
                             onClick={() => deleteRegistration(pair.a.id, pair.a.name, pair.a.email)}
                           >
                             {deleting() === pair.a.id ? <i class="ti ti-loader-2 animate-spin" /> : "A löschen"}
                           </button>
                           <button
                             class="btn-danger btn-sm"
-                            disabled={deleting() === pair.b.id}
+                            disabled={!!deleting()}
                             onClick={() => deleteRegistration(pair.b.id, pair.b.name, pair.b.email)}
                           >
                             {deleting() === pair.b.id ? <i class="ti ti-loader-2 animate-spin" /> : "B löschen"}
+                          </button>
+                          <button
+                            class="btn-danger btn-sm"
+                            disabled={!!deleting()}
+                            onClick={() => deleteBoth(pair)}
+                          >
+                            {deleting() === pair.a.id ? <i class="ti ti-loader-2 animate-spin" /> : "Beide löschen"}
                           </button>
                         </div>
                       </td>

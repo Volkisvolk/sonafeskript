@@ -21,6 +21,8 @@ import {
   RaffleStatsSchema,
   SimilarNamePairSchema,
   RaffleItemSchema,
+  RaffleMemberSchema,
+  AddMemberSchema,
   ErrorResponseSchema,
   MessageResponseSchema,
   RegisterResponseSchema,
@@ -32,12 +34,14 @@ const RegistrationListSchema = z.array(RegistrationSchema);
 const ExternalLinkListSchema = z.array(ExternalLinkSchema);
 const SimilarNamePairListSchema = z.array(SimilarNamePairSchema);
 const RaffleItemListSchema = z.array(RaffleItemSchema);
+const RaffleMemberListSchema = z.array(RaffleMemberSchema);
 
 const getOwnedRaffle = async (raffleId: string, userId: string) => {
   const raffle = await raffleService.raffles.get(raffleId);
   if (!raffle) return { ok: false as const, error: "Verlosung nicht gefunden.", status: 404 as const };
-  if (raffle.createdBy !== userId) return { ok: false as const, error: "Keine Berechtigung.", status: 403 as const };
-  return { ok: true as const, raffle };
+  const role = await raffleService.members.getRole({ raffleId, userId });
+  if (!role) return { ok: false as const, error: "Keine Berechtigung.", status: 403 as const };
+  return { ok: true as const, raffle, role };
 };
 
 const app = new Hono<AuthContext>()
@@ -427,6 +431,7 @@ const app = new Hono<AuthContext>()
       const raffleId = c.req.param("raffleId")!;
       const access = await getOwnedRaffle(raffleId, user.id);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können eine Verlosung löschen." }, 403);
       const result = await raffleService.raffles.remove(raffleId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Verlosung wurde gelöscht." });
@@ -443,7 +448,7 @@ const app = new Hono<AuthContext>()
           z.object({
             raffle: RaffleItemSchema,
             total: z.number(), won: z.number(), lost: z.number(), pending: z.number(),
-            paid: z.number(), collected: z.number(), totalRequestedTickets: z.number(), totalWonTickets: z.number(),
+            paid: z.number(), collected: z.number(), totalRequestedTickets: z.number(), totalWonTickets: z.number(), totalCollectedTickets: z.number(),
           }),
           "Zusammenfassung",
         ),
@@ -788,6 +793,72 @@ const app = new Hono<AuthContext>()
       const result = await raffleService.registrations.remove({ id: regId, raffleId });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Anmeldung wurde entfernt." });
+    },
+  )
+
+  .get(
+    "/user/raffles/:raffleId/members",
+    describeRoute({
+      tags: ["User"],
+      summary: "Mitglieder einer Verlosung auflisten",
+      responses: { 200: jsonResponse(RaffleMemberListSchema, "Mitgliederliste"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId")!;
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const members = await raffleService.members.list({ raffleId });
+      return c.json(members);
+    },
+  )
+
+  .post(
+    "/user/raffles/:raffleId/members",
+    describeRoute({
+      tags: ["User"],
+      summary: "Mitglied per E-Mail hinzufügen (nur Besitzer)",
+      responses: {
+        200: jsonResponse(RaffleMemberSchema, "Hinzugefügtes Mitglied"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nutzer nicht gefunden"),
+        409: jsonResponse(ErrorResponseSchema, "Bereits Mitglied"),
+      },
+    }),
+    v("json", AddMemberSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId")!;
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können Mitglieder hinzufügen." }, 403);
+      const data = c.req.valid("json");
+      return respond(c, raffleService.members.add({ raffleId, data }));
+    },
+  )
+
+  .delete(
+    "/user/raffles/:raffleId/members/:userId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Mitglied entfernen (nur Besitzer)",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Entfernt"),
+        400: jsonResponse(ErrorResponseSchema, "Letzter Besitzer"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId")!;
+      const access = await getOwnedRaffle(raffleId, user.id);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können Mitglieder entfernen." }, 403);
+      const userId = c.req.param("userId")!;
+      const result = await raffleService.members.remove({ raffleId, userId });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Mitglied wurde entfernt." });
     },
   )
 

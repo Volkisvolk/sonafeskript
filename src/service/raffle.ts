@@ -138,7 +138,8 @@ export const resetRaffle = async (raffleId: string): Promise<MutationResult<void
 
   await sql`
     UPDATE raffle.registrations
-    SET status = 'pending', won_tickets = NULL, qr_token = NULL
+    SET status = 'pending', won_tickets = NULL, qr_token = NULL,
+        paid_at = NULL, collected_at = NULL, collected_by = NULL
     WHERE raffle_id = ${raffleId}::uuid AND status IN ('won', 'lost')
   `;
 

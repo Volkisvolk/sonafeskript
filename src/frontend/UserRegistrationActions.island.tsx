@@ -11,22 +11,7 @@ interface Props {
 export default function UserRegistrationActions(props: Props) {
   const [loading, setLoading] = createSignal(false);
 
-  if (props.paidAt) {
-    return (
-      <span class="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-        <i class="ti ti-circle-check" />
-        Bezahlt
-      </span>
-    );
-  }
-
   const handlePaid = async () => {
-    const ok = await prompts.confirm("Karten als bezahlt markieren?", {
-      title: "Bezahlung bestätigen",
-      confirmText: "Ja, bezahlt!",
-    });
-    if (!ok) return;
-
     setLoading(true);
     try {
       const res = await fetch(
@@ -45,6 +30,52 @@ export default function UserRegistrationActions(props: Props) {
       setLoading(false);
     }
   };
+
+  const handleRevert = async () => {
+    const ok = await prompts.confirm(
+      "Bezahlung wirklich zurücksetzen? Die Karten werden wieder als nicht bezahlt und nicht abgeholt markiert.",
+      {
+        title: "Bezahlung zurücksetzen",
+        confirmText: "Ja, zurücksetzen",
+        variant: "danger",
+      },
+    );
+    if (!ok) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/raffle/user/raffles/${props.raffleId}/registrations/${props.registrationId}/mark-paid`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        await prompts.error(body.message ?? "Fehler aufgetreten.");
+        return;
+      }
+      refreshCurrentPath();
+    } catch {
+      await prompts.error("Verbindungsfehler.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (props.paidAt) {
+    return (
+      <button
+        class="btn-secondary btn-sm text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:text-red-600 hover:border-red-200 dark:hover:text-red-400 dark:hover:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+        disabled={loading()}
+        onClick={handleRevert}
+        title="Klicken zum Zurücksetzen"
+      >
+        {loading()
+          ? <i class="ti ti-loader-2 animate-spin mr-1" />
+          : <i class="ti ti-circle-check mr-1" />}
+        Bezahlt & Abgeholt
+      </button>
+    );
+  }
 
   return (
     <span class="group relative inline-block">

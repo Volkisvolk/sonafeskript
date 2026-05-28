@@ -63,11 +63,17 @@ export const markPaid = async (params: {
   if (row.paid_at) return { ok: false, error: "Karten sind bereits als bezahlt markiert.", status: 400 };
 
   await sql`
-    UPDATE raffle.registrations SET paid_at = now() WHERE id = ${params.registrationId}::uuid
+    UPDATE raffle.registrations SET paid_at = now(), collected_at = now()
+    WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
     registrationId: params.registrationId,
     eventType: "paid",
+    performedBy: params.performedBy,
+  });
+  await logEvent({
+    registrationId: params.registrationId,
+    eventType: "collected",
     performedBy: params.performedBy,
   });
   return { ok: true, data: undefined };
@@ -84,11 +90,17 @@ export const revertPaid = async (params: {
   if (!row.paid_at) return { ok: false, error: "Karten sind nicht als bezahlt markiert.", status: 400 };
 
   await sql`
-    UPDATE raffle.registrations SET paid_at = NULL WHERE id = ${params.registrationId}::uuid
+    UPDATE raffle.registrations SET paid_at = NULL, collected_at = NULL
+    WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
     registrationId: params.registrationId,
     eventType: "paid_reverted",
+    performedBy: params.performedBy,
+  });
+  await logEvent({
+    registrationId: params.registrationId,
+    eventType: "collected_reverted",
     performedBy: params.performedBy,
   });
   return { ok: true, data: undefined };

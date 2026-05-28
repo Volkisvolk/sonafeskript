@@ -278,4 +278,29 @@ export const migrate = async (): Promise<void> => {
     END $$
   `.simple();
   console.log("  ✓ raffle_id NOT NULL");
+
+  // ── Raffle Members ────────────────────────────────────────────────────────
+  await sql`
+    CREATE TABLE IF NOT EXISTS raffle.raffle_members (
+      raffle_id UUID NOT NULL REFERENCES raffle.raffles(id) ON DELETE CASCADE,
+      user_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+      role      TEXT NOT NULL DEFAULT 'moderator'
+                CHECK (role IN ('owner', 'moderator')),
+      added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (raffle_id, user_id)
+    )
+  `.simple();
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_raffle_members_raffle_id
+    ON raffle.raffle_members(raffle_id)
+  `.simple();
+  // Bestehende Verlosungen: Ersteller als owner eintragen
+  await sql`
+    INSERT INTO raffle.raffle_members (raffle_id, user_id, role)
+    SELECT id, created_by, 'owner'
+    FROM raffle.raffles
+    WHERE created_by IS NOT NULL
+    ON CONFLICT DO NOTHING
+  `.simple();
+  console.log("  ✓ raffle.raffle_members table");
 };

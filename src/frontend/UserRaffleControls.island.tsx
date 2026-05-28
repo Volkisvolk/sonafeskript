@@ -93,8 +93,8 @@ export default function UserRaffleControls(props: Props) {
               disabled={!!loading()}
               onClick={async () => {
                 const ok = await prompts.confirm(
-                  "Verlosung zurücksetzen? Alle Ergebnisse werden gelöscht und alle Anmeldungen sind wieder 'ausstehend'.",
-                  { title: "Zurücksetzen", confirmText: "Ja, zurücksetzen" },
+                  "Verlosung zurücksetzen?\n\nDadurch werden alle Ergebnisse gelöscht und alle Anmeldungen wieder auf 'Ausstehend' gesetzt. Außerdem werden alle Bezahlungen und Abholungen zurückgesetzt. Mails wurden noch nicht versendet, daher ist das sicher möglich.",
+                  { title: "Zurücksetzen", confirmText: "Ja, zurücksetzen", variant: "danger" },
                 );
                 if (ok) call("reset");
               }}

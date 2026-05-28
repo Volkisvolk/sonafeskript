@@ -4,6 +4,7 @@ import { Layout } from "@valentinkolb/cloud/ssr";
 import { settings } from "@valentinkolb/cloud/services";
 import { raffleService } from "@/service";
 import RegisterForm from "../RegisterForm.island";
+import { parseLinks } from "../lib/links";
 import RaffleFaq from "../RaffleFaq.island";
 
 export default ssr<AuthContext>(async (c) => {
@@ -39,6 +40,7 @@ export default ssr<AuthContext>(async (c) => {
   const pct = raffle.ticketContingent === 0
     ? 0
     : Math.min(100, Math.round((stats.totalRequestedTickets / raffle.ticketContingent) * 100));
+  const overbooked = stats.totalRequestedTickets >= raffle.ticketContingent;
 
   return () => (
     <Layout c={c} title={raffle.name}>
@@ -65,7 +67,7 @@ export default ssr<AuthContext>(async (c) => {
           </div>
           <h1 class="text-2xl font-bold text-primary mb-1">{raffle.name}</h1>
           {raffle.description ? (
-            <p class="text-sm text-dimmed">{raffle.description}</p>
+            <p class="text-sm text-dimmed" innerHTML={parseLinks(raffle.description)} />
           ) : (
             <p class="text-sm text-dimmed">Melde dich an und nimm an der Verlosung teil.</p>
           )}
@@ -79,15 +81,24 @@ export default ssr<AuthContext>(async (c) => {
               <span class="text-2xl font-bold text-primary">{stats.totalRequestedTickets}</span>
               <span class="text-sm text-dimmed ml-1">von {raffle.ticketContingent} Karten angefordert</span>
             </div>
-            <span class="text-sm text-dimmed">{remaining} frei</span>
+            <span class="text-sm text-dimmed">
+              {overbooked ? "Anmeldung offen" : `${remaining} frei`}
+            </span>
           </div>
           <div class="w-full h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
             <div
-              class={`h-full rounded-full transition-all ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-blue-500"}`}
+              class={`h-full rounded-full transition-all ${overbooked ? "bg-blue-500" : pct >= 90 ? "bg-amber-500" : "bg-blue-500"}`}
               style={`width: ${pct}%`}
             />
           </div>
-          <p class="text-xs text-dimmed mt-1 text-right">{pct}% des Kontingents</p>
+          {overbooked ? (
+            <div class="info-block-info px-3 py-2 mt-2 text-xs flex items-center gap-2">
+              <i class="ti ti-arrow-shuffle shrink-0" />
+              <span>Es haben sich mehr Personen angemeldet als Karten vorhanden sind — das ist normal und gewollt. Du kannst dich trotzdem anmelden! Wer eine Karte erhält, wird anschließend per Verlosung zufällig ausgewählt.</span>
+            </div>
+          ) : (
+            <p class="text-xs text-dimmed mt-1 text-right">{pct}% des Kontingents</p>
+          )}
         </div>
 
         {/* ── Status-Meldung oder Formular ─────────────────────────────────── */}
@@ -124,13 +135,6 @@ export default ssr<AuthContext>(async (c) => {
             </div>
           </div>
         )}
-
-        {/* ── Anmeldungshinweis ───────────────────────────────────────────── */}
-        <div class="info-block-info p-3 mb-4 text-xs">
-          <i class="ti ti-info-circle mr-1" />
-          <strong>Anmeldezahl:</strong> {stats.totalRegistrations} Person{stats.totalRegistrations !== 1 ? "en" : ""}{" "}
-          haben sich bisher angemeldet.
-        </div>
 
         {/* ── FAQ ─────────────────────────────────────────────────────────── */}
         <RaffleFaq items={raffle.faqItems} />
