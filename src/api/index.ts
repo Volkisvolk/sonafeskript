@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { describeRoute } from "hono-openapi";
 import { z } from "zod";
 import { sql } from "bun";
-import { v, jsonResponse, auth, type AuthContext, rateLimit, respond } from "@valentinkolb/cloud/server";
+import { v, jsonResponse, auth, type AuthContext, rateLimit, respond, hasPermission, type Principal, type PermissionLevel } from "@valentinkolb/cloud/server";
 import { settings, notifications } from "@valentinkolb/cloud/services";
 import { raffleService } from "../service";
 import {
@@ -21,8 +21,6 @@ import {
   RaffleStatsSchema,
   SimilarNamePairSchema,
   RaffleItemSchema,
-  RaffleMemberSchema,
-  AddMemberSchema,
   ErrorResponseSchema,
   MessageResponseSchema,
   RegisterResponseSchema,
@@ -34,14 +32,13 @@ const RegistrationListSchema = z.array(RegistrationSchema);
 const ExternalLinkListSchema = z.array(ExternalLinkSchema);
 const SimilarNamePairListSchema = z.array(SimilarNamePairSchema);
 const RaffleItemListSchema = z.array(RaffleItemSchema);
-const RaffleMemberListSchema = z.array(RaffleMemberSchema);
 
-const getOwnedRaffle = async (raffleId: string, userId: string) => {
+const getOwnedRaffle = async (raffleId: string, userId: string, userGroups: string[]) => {
   const raffle = await raffleService.raffles.get(raffleId);
   if (!raffle) return { ok: false as const, error: "Verlosung nicht gefunden.", status: 404 as const };
-  const role = await raffleService.members.getRole({ raffleId, userId });
-  if (!role) return { ok: false as const, error: "Keine Berechtigung.", status: 403 as const };
-  return { ok: true as const, raffle, role };
+  const permission = await raffleService.access.getUserPermission(raffleId, userId, userGroups);
+  if (!hasPermission(permission, "write")) return { ok: false as const, error: "Keine Berechtigung.", status: 403 as const };
+  return { ok: true as const, raffle, permission };
 };
 
 const app = new Hono<AuthContext>()
@@ -408,7 +405,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const data = c.req.valid("json");
       return respond(c, raffleService.raffles.update(raffleId, data));
@@ -429,9 +426,9 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können eine Verlosung löschen." }, 403);
+      if (!hasPermission(access.permission, 'admin')) return c.json({ error: true, message: "Nur Besitzer können eine Verlosung löschen." }, 403);
       const result = await raffleService.raffles.remove(raffleId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
       return c.json({ message: "Verlosung wurde gelöscht." });
@@ -459,7 +456,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const summary = await raffleService.registrations.getAdminSummary({ raffleId });
       return c.json({ raffle: access.raffle, ...summary });
@@ -476,7 +473,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const search = c.req.query("search")?.trim();
       const filter = c.req.query("filter") as "won" | "lost" | "pending" | "duplicate_email" | "duplicate_name" | undefined;
@@ -501,7 +498,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       const reg = await raffleService.registrations.get({ id: regId, raffleId });
@@ -526,7 +523,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       const scopeCheck = await raffleService.registrations.get({ id: regId, raffleId });
@@ -550,7 +547,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       const result = await raffleService.registrations.remove({ id: regId, raffleId });
@@ -573,7 +570,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       const reg = await raffleService.registrations.get({ id: regId, raffleId });
@@ -600,7 +597,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.runRaffle(raffleId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
@@ -622,7 +619,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.finalizeRaffle(raffleId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
@@ -644,7 +641,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const result = await raffleService.raffle.resetRaffle(raffleId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
@@ -662,7 +659,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -682,7 +679,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -702,7 +699,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -722,7 +719,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -743,7 +740,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -765,7 +762,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
@@ -787,7 +784,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       const result = await raffleService.registrations.remove({ id: regId, raffleId });
@@ -797,68 +794,77 @@ const app = new Hono<AuthContext>()
   )
 
   .get(
-    "/user/raffles/:raffleId/members",
+    "/user/raffles/:raffleId/access",
     describeRoute({
       tags: ["User"],
-      summary: "Mitglieder einer Verlosung auflisten",
-      responses: { 200: jsonResponse(RaffleMemberListSchema, "Mitgliederliste"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+      summary: "Zugriffseinträge einer Verlosung auflisten",
+      responses: { 200: jsonResponse(z.array(z.any()), "Zugriffseinträge"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
-      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      const members = await raffleService.members.list({ raffleId });
-      return c.json(members);
+      const check = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
+      if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
+      return c.json(await raffleService.access.list(raffleId));
     },
   )
 
   .post(
-    "/user/raffles/:raffleId/members",
+    "/user/raffles/:raffleId/access",
     describeRoute({
       tags: ["User"],
-      summary: "Mitglied per E-Mail hinzufügen (nur Besitzer)",
-      responses: {
-        200: jsonResponse(RaffleMemberSchema, "Hinzugefügtes Mitglied"),
-        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
-        404: jsonResponse(ErrorResponseSchema, "Nutzer nicht gefunden"),
-        409: jsonResponse(ErrorResponseSchema, "Bereits Mitglied"),
-      },
+      summary: "Zugriff vergeben (nur Admin)",
+      responses: { 200: jsonResponse(z.any(), "Neuer Eintrag"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
-    v("json", AddMemberSchema),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
-      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können Mitglieder hinzufügen." }, 403);
-      const data = c.req.valid("json");
-      return respond(c, raffleService.members.add({ raffleId, data }));
+      const check = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
+      if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
+      if (!hasPermission(check.permission, "admin")) return c.json({ error: true, message: "Nur Admins können Zugriffsrechte vergeben." }, 403);
+      const { principal, permission } = await c.req.json<{ principal: Principal; permission: PermissionLevel }>();
+      return respond(c, raffleService.access.grant(raffleId, principal, permission));
+    },
+  )
+
+  .patch(
+    "/user/raffles/:raffleId/access/:accessId",
+    describeRoute({
+      tags: ["User"],
+      summary: "Zugriffsrecht ändern (nur Admin)",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Geändert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId")!;
+      const check = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
+      if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
+      if (!hasPermission(check.permission, "admin")) return c.json({ error: true, message: "Nur Admins können Zugriffsrechte ändern." }, 403);
+      const accessId = c.req.param("accessId")!;
+      const { permission } = await c.req.json<{ permission: PermissionLevel }>();
+      const result = await raffleService.access.update(raffleId, accessId, permission);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Zugriffsrecht aktualisiert." });
     },
   )
 
   .delete(
-    "/user/raffles/:raffleId/members/:userId",
+    "/user/raffles/:raffleId/access/:accessId",
     describeRoute({
       tags: ["User"],
-      summary: "Mitglied entfernen (nur Besitzer)",
-      responses: {
-        200: jsonResponse(MessageResponseSchema, "Entfernt"),
-        400: jsonResponse(ErrorResponseSchema, "Letzter Besitzer"),
-        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
-        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
-      },
+      summary: "Zugriff entziehen (nur Admin)",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Entfernt"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
-      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
-      if (access.role !== "owner") return c.json({ error: true, message: "Nur Besitzer können Mitglieder entfernen." }, 403);
-      const userId = c.req.param("userId")!;
-      const result = await raffleService.members.remove({ raffleId, userId });
+      const check = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
+      if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
+      if (!hasPermission(check.permission, "admin")) return c.json({ error: true, message: "Nur Admins können Zugriffsrechte entziehen." }, 403);
+      const accessId = c.req.param("accessId")!;
+      const result = await raffleService.access.revoke(raffleId, accessId);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
-      return c.json({ message: "Mitglied wurde entfernt." });
+      return c.json({ message: "Zugriff wurde entzogen." });
     },
   )
 
@@ -872,7 +878,7 @@ const app = new Hono<AuthContext>()
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
-      const access = await getOwnedRaffle(raffleId, user.id);
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const pairs = await raffleService.registrations.findSimilarNames({ raffleId });
       return c.json(pairs);

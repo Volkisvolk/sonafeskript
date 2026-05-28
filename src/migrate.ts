@@ -279,28 +279,43 @@ export const migrate = async (): Promise<void> => {
   `.simple();
   console.log("  ✓ raffle_id NOT NULL");
 
-  // ── Raffle Members ────────────────────────────────────────────────────────
+  // ── Raffle Access (Cloud Permission System) ──────────────────────────────
+  // Junction table connecting raffles to auth.access entries.
+  // Permissions: admin = Besitzer, write = Moderator
   await sql`
-    CREATE TABLE IF NOT EXISTS raffle.raffle_members (
+    CREATE TABLE IF NOT EXISTS raffle.raffle_access (
       raffle_id UUID NOT NULL REFERENCES raffle.raffles(id) ON DELETE CASCADE,
-      user_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-      role      TEXT NOT NULL DEFAULT 'moderator'
-                CHECK (role IN ('owner', 'moderator')),
-      added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (raffle_id, user_id)
+      access_id UUID NOT NULL REFERENCES auth.access(id) ON DELETE CASCADE,
+      PRIMARY KEY (raffle_id, access_id)
     )
   `.simple();
   await sql`
-    CREATE INDEX IF NOT EXISTS idx_raffle_members_raffle_id
-    ON raffle.raffle_members(raffle_id)
+    CREATE INDEX IF NOT EXISTS idx_raffle_access_raffle_id
+    ON raffle.raffle_access(raffle_id)
   `.simple();
-  // Bestehende Verlosungen: Ersteller als owner eintragen
+  // Bestehende Verlosungen: Ersteller als admin-Eintrag anlegen (idempotent)
   await sql`
-    INSERT INTO raffle.raffle_members (raffle_id, user_id, role)
-    SELECT id, created_by, 'owner'
-    FROM raffle.raffles
-    WHERE created_by IS NOT NULL
-    ON CONFLICT DO NOTHING
+    DO $$
+    DECLARE
+      r RECORD;
+      aid UUID;
+    BEGIN
+      FOR r IN
+        SELECT id, created_by FROM raffle.raffles
+        WHERE created_by IS NOT NULL
+      LOOP
+        IF NOT EXISTS (
+          SELECT 1 FROM raffle.raffle_access ra
+          JOIN auth.access a ON a.id = ra.access_id
+          WHERE ra.raffle_id = r.id AND a.user_id = r.created_by
+        ) THEN
+          INSERT INTO auth.access (user_id, group_id, authenticated_only, permission)
+          VALUES (r.created_by, NULL, false, 'admin')
+          RETURNING id INTO aid;
+          INSERT INTO raffle.raffle_access (raffle_id, access_id) VALUES (r.id, aid);
+        END IF;
+      END LOOP;
+    END $$
   `.simple();
-  console.log("  ✓ raffle.raffle_members table");
+  console.log("  ✓ raffle.raffle_access table");
 };

@@ -72,11 +72,8 @@ export const create = async (data: CreateRaffle, createdBy?: string): Promise<Mu
   if (!row) return { ok: false, error: "Verlosung konnte nicht erstellt werden.", status: 500 };
 
   if (createdBy) {
-    await sql`
-      INSERT INTO raffle.raffle_members (raffle_id, user_id, role)
-      VALUES (${row.id}::uuid, ${createdBy}::uuid, 'owner')
-      ON CONFLICT DO NOTHING
-    `;
+    const { grant } = await import("./access");
+    await grant(row.id, { type: "user", userId: createdBy }, "admin");
   }
 
   const item = await get(row.id);

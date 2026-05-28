@@ -1,6 +1,8 @@
 import { createSignal, For, Show } from "solid-js";
 import { prompts, refreshCurrentPath } from "@valentinkolb/cloud/ui";
-import type { RaffleItem, RaffleMember } from "@/contracts";
+import { PermissionEditor } from "@valentinkolb/cloud/ui";
+import type { AccessEntry, PermissionLevel, Principal } from "@valentinkolb/cloud/server";
+import type { RaffleItem } from "@/contracts";
 
 type EmailConfig = Pick<
   RaffleItem,
@@ -46,123 +48,53 @@ interface Props {
   regEmailSubject: string | null;
   regEmailBody: string | null;
   defaults: Defaults;
-  members: RaffleMember[];
-  currentUserRole: "owner" | "moderator";
-  currentUserId: string;
+  initialAccessEntries: AccessEntry[];
+  canEditAccess: boolean;
 }
 
-function MembersTab(p: { raffleId: string; members: RaffleMember[]; currentUserRole: "owner" | "moderator"; currentUserId: string }) {
-  const [memberEmail, setMemberEmail] = createSignal("");
-  const [memberRole, setMemberRole] = createSignal<"owner" | "moderator">("moderator");
-  const [memberLoading, setMemberLoading] = createSignal(false);
+function MembersTab(p: { raffleId: string; initialAccessEntries: AccessEntry[]; canEditAccess: boolean }) {
+  const baseUrl = `/api/raffle/user/raffles/${p.raffleId}/access`;
 
-  const isOwner = () => p.currentUserRole === "owner";
-
-  const handleAdd = async () => {
-    if (!memberEmail().trim()) return;
-    setMemberLoading(true);
-    try {
-      const res = await fetch(`/api/raffle/user/raffles/${p.raffleId}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: memberEmail().trim(), role: memberRole() }),
-      });
-      const body = await res.json();
-      if (!res.ok) { await prompts.error(body.message ?? "Fehler beim Hinzufügen."); return; }
-      setMemberEmail("");
-      refreshCurrentPath();
-    } catch {
-      await prompts.error("Verbindungsfehler.");
-    } finally {
-      setMemberLoading(false);
-    }
+  const grantAccess = async (_: string, principal: Principal, permission: PermissionLevel) => {
+    const res = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ principal, permission }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? "Fehler");
+    return res.json() as Promise<AccessEntry>;
   };
 
-  const handleRemove = async (member: RaffleMember) => {
-    const name = member.displayName ?? member.mail ?? member.userId;
-    const ok = await prompts.confirm(`${name} aus dieser Verlosung entfernen?`, {
-      title: "Mitglied entfernen",
-      confirmText: "Ja, entfernen",
-      variant: "danger",
+  const updateAccess = async (_: string, accessId: string, permission: PermissionLevel) => {
+    const res = await fetch(`${baseUrl}/${accessId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permission }),
     });
-    if (!ok) return;
-    try {
-      const res = await fetch(`/api/raffle/user/raffles/${p.raffleId}/members/${member.userId}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        await prompts.error(body.message ?? "Fehler beim Entfernen.");
-        return;
-      }
-      refreshCurrentPath();
-    } catch {
-      await prompts.error("Verbindungsfehler.");
-    }
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? "Fehler");
+  };
+
+  const revokeAccess = async (_: string, accessId: string) => {
+    const res = await fetch(`${baseUrl}/${accessId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? "Fehler");
   };
 
   return (
-    <div class="flex flex-col gap-3">
-      <div class="divide-y divide-zinc-100 dark:divide-zinc-800 border border-zinc-100 dark:border-zinc-800 rounded-lg overflow-hidden">
-        <For each={p.members}>
-          {(member) => (
-            <div class="px-3 py-2 flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2 min-w-0">
-                <div class="w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center shrink-0">
-                  <i class="ti ti-user text-dimmed text-xs" />
-                </div>
-                <div class="min-w-0">
-                  <p class="text-xs font-medium text-primary truncate">
-                    {member.displayName ?? member.mail ?? member.userId}
-                  </p>
-                  <Show when={member.displayName && member.mail}>
-                    <p class="text-xs text-dimmed truncate">{member.mail}</p>
-                  </Show>
-                </div>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <span class={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                  member.role === "owner"
-                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                    : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-                }`}>
-                  {member.role === "owner" ? "Besitzer" : "Moderator"}
-                </span>
-                <Show when={isOwner() && member.userId !== p.currentUserId}>
-                  <button class="btn-simple btn-sm text-red-500 hover:text-red-600" onClick={() => handleRemove(member)}>
-                    <i class="ti ti-x text-xs" />
-                  </button>
-                </Show>
-              </div>
-            </div>
-          )}
-        </For>
-      </div>
-
-      <Show when={isOwner()}>
-        <div class="flex flex-col gap-2">
-          <p class="text-xs font-medium text-dimmed">Mitglied hinzufügen</p>
-          <div class="flex gap-2">
-            <input
-              type="email"
-              class="btn-input flex-1"
-              placeholder="E-Mail-Adresse"
-              value={memberEmail()}
-              onInput={(e) => setMemberEmail(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-            />
-            <select class="btn-input shrink-0" value={memberRole()} onChange={(e) => setMemberRole(e.currentTarget.value as "owner" | "moderator")}>
-              <option value="moderator">Moderator</option>
-              <option value="owner">Besitzer</option>
-            </select>
-            <button class="btn-primary btn-sm shrink-0" disabled={!memberEmail().trim() || memberLoading()} onClick={handleAdd}>
-              {memberLoading() ? <i class="ti ti-loader-2 animate-spin" /> : <i class="ti ti-plus" />}
-            </button>
-          </div>
-          <p class="text-xs text-dimmed">
-            <i class="ti ti-info-circle mr-1" />
-            Moderatoren können die Verlosung verwalten. Besitzer können zusätzlich Mitglieder verwalten und die Verlosung löschen.
-          </p>
-        </div>
-      </Show>
+    <div class="flex flex-col gap-2">
+      <p class="text-xs text-dimmed">
+        <i class="ti ti-info-circle mr-1" />
+        <strong>Admin</strong> = kann Verlosung löschen und Zugriffsrechte verwalten.
+        <strong class="ml-2">Write</strong> = kann Verlosung und Anmeldungen verwalten.
+        <strong class="ml-2">Read</strong> = nur Lesezugriff.
+      </p>
+      <PermissionEditor
+        resourceId={p.raffleId}
+        initialEntries={p.initialAccessEntries}
+        canEdit={p.canEditAccess}
+        grantAccess={grantAccess}
+        updateAccess={updateAccess}
+        revokeAccess={revokeAccess}
+      />
     </div>
   );
 }
@@ -395,7 +327,7 @@ export default function UserRaffleSettings(props: Props) {
   };
 
   return (
-    <div class="paper overflow-hidden">
+    <div class="paper">
       {/* ── Header ── */}
       <div class="px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
         <div class="flex items-center gap-2">
@@ -972,9 +904,8 @@ export default function UserRaffleSettings(props: Props) {
           <Show when={tab() === "members"}>
             <MembersTab
               raffleId={props.raffleId}
-              members={props.members}
-              currentUserRole={props.currentUserRole}
-              currentUserId={props.currentUserId}
+              initialAccessEntries={props.initialAccessEntries}
+              canEditAccess={props.canEditAccess}
             />
           </Show>
 

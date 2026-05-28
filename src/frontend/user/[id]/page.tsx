@@ -1,7 +1,7 @@
 import { ssr } from "../../../config";
 import { Layout } from "@valentinkolb/cloud/ssr";
 import { StatCell, Pagination } from "@valentinkolb/cloud/ui";
-import { type AuthContext } from "@valentinkolb/cloud/server";
+import { type AuthContext, hasPermission } from "@valentinkolb/cloud/server";
 import { settings } from "@valentinkolb/cloud/services";
 import { raffleService } from "@/service";
 import UserRaffleControls from "../../UserRaffleControls.island";
@@ -30,7 +30,8 @@ export default ssr<AuthContext>(async (c) => {
 
   const raffle = await raffleService.raffles.get(raffleId);
 
-  if (!raffle || raffle.createdBy !== user.id) {
+  const earlyPermission = await raffleService.access.getUserPermission(raffleId, user.id, user.memberofGroupIds);
+  if (!raffle || !hasPermission(earlyPermission, "write")) {
     return () => (
       <Layout c={c} title="Nicht gefunden">
         <div class="max-w-2xl mx-auto pt-12 text-center">
@@ -49,7 +50,7 @@ export default ssr<AuthContext>(async (c) => {
   const search = (c.req.query("search") ?? "").trim();
   const filter = c.req.query("filter") as "won" | "lost" | "pending" | undefined;
 
-  const [summary, registrations, members, currentUserRole, defaultAgbText, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
+  const [summary, registrations, accessEntries, userPermission, defaultAgbText, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
     raffleService.registrations.getAdminSummary({ raffleId }),
     raffleService.registrations.listAdmin({
       raffleId,
@@ -57,8 +58,8 @@ export default ssr<AuthContext>(async (c) => {
       filter,
       pagination: { page, perPage: PER_PAGE },
     }),
-    raffleService.members.list({ raffleId }),
-    raffleService.members.getRole({ raffleId, userId: user.id }),
+    raffleService.access.list(raffleId),
+    raffleService.access.getUserPermission(raffleId, user.id, user.memberofGroupIds),
     settings.get<string>("raffle.agb_text"),
     settings.get<string>("raffle.reply_to_email"),
     settings.get<string>("raffle.reg_email_subject"),
@@ -207,9 +208,8 @@ export default ssr<AuthContext>(async (c) => {
               lossEmailSubject: raffle.lossEmailSubject,
               lossEmailBody: raffle.lossEmailBody,
             }}
-            members={members}
-            currentUserRole={currentUserRole ?? "moderator"}
-            currentUserId={user.id}
+            initialAccessEntries={accessEntries}
+            canEditAccess={userPermission === "admin"}
           />
 
           {/* ── Tabs ─────────────────────────────────────────────────────────── */}
