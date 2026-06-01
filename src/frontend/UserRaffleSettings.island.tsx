@@ -87,6 +87,10 @@ function MembersTab(p: { raffleId: string; initialAccessEntries: AccessEntry[]; 
         <strong class="ml-2">Write</strong> = kann Verlosung und Anmeldungen verwalten.
         <strong class="ml-2">Read</strong> = nur Lesezugriff.
       </p>
+      <p class="text-xs text-dimmed italic">
+        <i class="ti ti-device-floppy mr-1" />
+        Änderungen werden sofort gespeichert – kein Speichern-Button nötig.
+      </p>
       <PermissionEditor
         resourceId={p.raffleId}
         initialEntries={p.initialAccessEntries}
