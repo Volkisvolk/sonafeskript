@@ -113,8 +113,12 @@ const app = new Hono<AuthContext>()
       }
 
       if (raffle.allowedEmailPatterns.length > 0) {
+        const emailLower = data.email.toLowerCase();
         const allowed = raffle.allowedEmailPatterns.some((pattern) => {
-          try { return new RegExp(pattern, "i").test(data.email); } catch { return false; }
+          const p = pattern.trim().toLowerCase();
+          if (p.startsWith("*@")) return emailLower.endsWith(p.slice(1));
+          if (p.includes("@")) return emailLower === p;
+          return emailLower.endsWith(`@${p}`);
         });
         if (!allowed) {
           return c.json({ error: true, message: "Deine E-Mail-Adresse ist für diese Verlosung nicht zugelassen." }, 400);

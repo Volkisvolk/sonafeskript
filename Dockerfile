@@ -18,5 +18,6 @@ RUN bun run node_modules/@valentinkolb/cloud/scripts/build.ts
 FROM oven/bun:1-alpine AS runtime
 WORKDIR /app
 COPY --from=build /app/dist ./
+LABEL org.opencontainers.image.source=https://github.com/Volkisvolk/sonafeskript
 EXPOSE 3000
 CMD ["bun", "server.js"]

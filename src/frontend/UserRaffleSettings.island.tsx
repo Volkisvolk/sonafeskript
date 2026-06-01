@@ -109,10 +109,18 @@ const Tip = (props: { text: string }) => (
 );
 
 const PRESETS = [
-  { label: "Uni Ulm", pattern: "^[^@]*\\.[^@]*@uni-ulm\\.de$", hint: "vorname.nachname@uni-ulm.de" },
-  { label: "THU",     pattern: "@thu\\.de$",                    hint: "*@thu.de" },
-  { label: "HS Ulm",  pattern: "@hs-ulm\\.de$",                hint: "*@hs-ulm.de" },
+  { label: "Uni Ulm", pattern: "uni-ulm.de", hint: "*@uni-ulm.de" },
+  { label: "THU",     pattern: "thu.de",     hint: "*@thu.de" },
+  { label: "HS Ulm",  pattern: "hs-ulm.de",  hint: "*@hs-ulm.de" },
 ];
+
+const emailMatchesPattern = (email: string, pattern: string): boolean => {
+  const p = pattern.trim().toLowerCase();
+  const e = email.trim().toLowerCase();
+  if (p.startsWith("*@")) return e.endsWith(p.slice(1));
+  if (p.includes("@")) return e === p;
+  return e.endsWith(`@${p}`);
+};
 
 type Tab = "general" | "filter" | "email" | "banner" | "faq" | "members";
 
@@ -134,13 +142,15 @@ export default function UserRaffleSettings(props: Props) {
   const inputError = () => {
     const v = customInput().trim();
     if (!v) return null;
-    try { new RegExp(v, "i"); return null; } catch (e: any) { return e.message as string; }
+    if (v.includes(" ")) return "Keine Leerzeichen erlaubt.";
+    if (!v.includes(".")) return "Bitte eine Domain angeben, z. B. uni.de oder *@uni.de";
+    return null;
   };
 
   const addPattern = (p: string) => {
     const trimmed = p.trim();
     if (!trimmed || patterns().includes(trimmed)) return;
-    try { new RegExp(trimmed, "i"); } catch { return; }
+    if (inputError()) return;
     setPatterns((prev) => [...prev, trimmed]);
   };
 
@@ -157,7 +167,7 @@ export default function UserRaffleSettings(props: Props) {
     const e = testEmail().trim();
     const list = patterns();
     if (!e || list.length === 0) return null;
-    const allowed = list.some((p) => { try { return new RegExp(p, "i").test(e); } catch { return false; } });
+    const allowed = list.some((p) => emailMatchesPattern(e, p));
     return allowed ? "erlaubt" : "gesperrt";
   };
 
@@ -520,14 +530,14 @@ export default function UserRaffleSettings(props: Props) {
 
             <div>
               <p class="text-xs font-medium text-dimmed mb-2">
-                Eigenes Muster (RegEx)
-                <Tip text="Regulaerer Ausdruck (JavaScript-Syntax) zur E-Mail-Pruefung. Gross-/Kleinschreibung wird ignoriert." />
+                Domain oder Adresse hinzufügen
+                <Tip text="Erlaubte Formate: Domain (uni.de), Wildcard (*@uni.de) oder genaue Adresse (max@uni.de). Gross-/Kleinschreibung egal." />
               </p>
               <div class="flex gap-2">
                 <input
                   type="text"
                   class="btn-input flex-1 font-mono"
-                  placeholder="z. B. @meinverein\.de$"
+                  placeholder="z. B. uni.de oder *@uni.de"
                   value={customInput()}
                   onInput={(e) => setCustomInput(e.currentTarget.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddCustom()}

@@ -1,15 +1,18 @@
 import { ssr } from "../../../config";
 import { Layout } from "@valentinkolb/cloud/ssr";
-import { type AuthContext } from "@valentinkolb/cloud/server";
+import { type AuthContext, hasPermission } from "@valentinkolb/cloud/server";
 import { raffleService } from "@/service";
 import UserQrScanner from "../../UserQrScanner.island";
 
 export default ssr<AuthContext>(async (c) => {
   const user = c.get("user")!;
   const raffleId = c.req.param("id")!;
-  const raffle = await raffleService.raffles.get(raffleId);
+  const [raffle, permission] = await Promise.all([
+    raffleService.raffles.get(raffleId),
+    raffleService.access.getUserPermission(raffleId, user.id, user.memberofGroupIds),
+  ]);
 
-  if (!raffle || raffle.createdBy !== user.id) {
+  if (!raffle || !hasPermission(permission, "write")) {
     return () => (
       <Layout c={c} title="Nicht gefunden">
         <div class="max-w-2xl mx-auto pt-12 text-center">
