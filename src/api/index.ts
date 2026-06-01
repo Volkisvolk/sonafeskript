@@ -24,6 +24,8 @@ import {
   ErrorResponseSchema,
   MessageResponseSchema,
   RegisterResponseSchema,
+  GrantAccessSchema,
+  UpdateAccessSchema,
 } from "@/contracts";
 
 import widgetRoutes from "./widgets";
@@ -820,13 +822,14 @@ const app = new Hono<AuthContext>()
       summary: "Zugriff vergeben (nur Admin)",
       responses: { 200: jsonResponse(z.any(), "Neuer Eintrag"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
+    v("json", GrantAccessSchema),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
       const check = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
       if (!hasPermission(check.permission, "admin")) return c.json({ error: true, message: "Nur Admins können Zugriffsrechte vergeben." }, 403);
-      const { principal, permission } = await c.req.json<{ principal: Principal; permission: PermissionLevel }>();
+      const { principal, permission } = c.req.valid("json");
       return respond(c, raffleService.access.grant(raffleId, principal, permission));
     },
   )
@@ -838,6 +841,7 @@ const app = new Hono<AuthContext>()
       summary: "Zugriffsrecht ändern (nur Admin)",
       responses: { 200: jsonResponse(MessageResponseSchema, "Geändert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
+    v("json", UpdateAccessSchema),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
@@ -845,7 +849,7 @@ const app = new Hono<AuthContext>()
       if (!check.ok) return c.json({ error: true, message: check.error }, check.status);
       if (!hasPermission(check.permission, "admin")) return c.json({ error: true, message: "Nur Admins können Zugriffsrechte ändern." }, 403);
       const accessId = c.req.param("accessId")!;
-      const { permission } = await c.req.json<{ permission: PermissionLevel }>();
+      const { permission } = c.req.valid("json");
       const result = await raffleService.access.update(raffleId, accessId, permission);
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Zugriffsrecht aktualisiert." });

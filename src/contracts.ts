@@ -256,6 +256,27 @@ export const AddMemberSchema = z.object({
 });
 export type AddMember = z.infer<typeof AddMemberSchema>;
 
+// ── Access / Permissions ──────────────────────────────────────────────────────
+
+const PermissionLevelSchema = z.enum(["read", "write", "admin"]);
+
+const PrincipalSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("user"), userId: z.string().uuid() }),
+  z.object({ type: z.literal("group"), groupId: z.string().uuid() }),
+  z.object({ type: z.literal("authenticated") }),
+]);
+
+export const GrantAccessSchema = z.object({
+  principal: PrincipalSchema,
+  permission: PermissionLevelSchema,
+});
+export type GrantAccess = z.infer<typeof GrantAccessSchema>;
+
+export const UpdateAccessSchema = z.object({
+  permission: PermissionLevelSchema,
+});
+export type UpdateAccess = z.infer<typeof UpdateAccessSchema>;
+
 // ── Standard envelopes ───────────────────────────────────────────────────────
 
 export const ErrorResponseSchema = z.object({
