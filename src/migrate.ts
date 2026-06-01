@@ -147,6 +147,22 @@ export const migrate = async (): Promise<void> => {
     ALTER TABLE raffle.raffles
     ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
   `.simple();
+  // Falls created_by als TEXT existiert (ältere Instanzen): auf UUID upgraden
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'raffle' AND table_name = 'raffles'
+          AND column_name = 'created_by' AND data_type = 'text'
+      ) THEN
+        ALTER TABLE raffle.raffles
+          ALTER COLUMN created_by TYPE UUID
+          USING CASE WHEN created_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                     THEN created_by::uuid ELSE NULL END;
+      END IF;
+    END $$
+  `.simple();
   console.log("  ✓ raffle.raffles created_by column");
 
   await sql`
@@ -303,7 +319,6 @@ export const migrate = async (): Promise<void> => {
       FOR r IN
         SELECT id, created_by FROM raffle.raffles
         WHERE created_by IS NOT NULL
-          AND created_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       LOOP
         IF NOT EXISTS (
           SELECT 1 FROM raffle.raffle_access ra

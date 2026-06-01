@@ -137,7 +137,12 @@ export const update = async (id: string, data: UpdateRaffle): Promise<MutationRe
 export const listByUser = async (userId: string): Promise<RaffleItem[]> => {
   const rows = await sql<DbRaffle[]>`
     ${WITH_COUNT}
-    WHERE r.created_by = ${userId}::uuid
+    WHERE r.id IN (
+      SELECT ra.raffle_id FROM raffle.raffle_access ra
+      JOIN auth.access a ON a.id = ra.access_id
+      WHERE a.user_id = ${userId}::uuid
+    )
+    OR r.created_by = ${userId}
     ORDER BY r.created_at DESC
   `;
   return rows.map(mapRaffle);
