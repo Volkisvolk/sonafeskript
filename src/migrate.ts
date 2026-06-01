@@ -303,14 +303,15 @@ export const migrate = async (): Promise<void> => {
       FOR r IN
         SELECT id, created_by FROM raffle.raffles
         WHERE created_by IS NOT NULL
+          AND created_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       LOOP
         IF NOT EXISTS (
           SELECT 1 FROM raffle.raffle_access ra
           JOIN auth.access a ON a.id = ra.access_id
-          WHERE ra.raffle_id = r.id AND a.user_id = r.created_by
+          WHERE ra.raffle_id = r.id AND a.user_id = r.created_by::uuid
         ) THEN
           INSERT INTO auth.access (user_id, group_id, authenticated_only, permission)
-          VALUES (r.created_by, NULL, false, 'admin')
+          VALUES (r.created_by::uuid, NULL, false, 'admin')
           RETURNING id INTO aid;
           INSERT INTO raffle.raffle_access (raffle_id, access_id) VALUES (r.id, aid);
         END IF;
