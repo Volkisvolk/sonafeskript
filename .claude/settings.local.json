@@ -21,7 +21,9 @@
       "Bash(mkdir -p \"c:\\\\Users\\\\Volkan\\\\Desktop\\\\SonaFeSkript\\\\my-cloud\\\\src\\\\frontend\\\\admin\\\\[id]\\\\[regId]\")",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Volkan\\\\Desktop\\\\SonaFeSkript\\\\my-cloud\\\\src\\\\frontend\" -Recurse -Name)",
       "Bash(Sort-Object)",
-      "PowerShell(docker compose logs app-raffle --tail=20 2>&1)"
+      "PowerShell(docker compose logs app-raffle --tail=20 2>&1)",
+      "Bash(curl -sv http://localhost:3000/app/raffle/my)",
+      "Bash(git commit -m ' *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Volkan\\Desktop\\SonaFeSkript\\my-cloud\\src\\frontend\\admin\\[id]"
