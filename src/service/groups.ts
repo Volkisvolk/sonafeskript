@@ -168,8 +168,11 @@ export type GroupWithMembers = {
   members: { id: string; requestedTickets: number }[];
 };
 
-export const listGroupsWithMembers = async (params: { raffleId: string }): Promise<GroupWithMembers[]> => {
-  const rows = await sql<{ group_id: string; id: string; requested_tickets: number }[]>`
+export const listGroupsWithMembers = async (
+  params: { raffleId: string },
+  db: typeof sql = sql,
+): Promise<GroupWithMembers[]> => {
+  const rows = await db<{ group_id: string; id: string; requested_tickets: number }[]>`
     SELECT group_id, id, requested_tickets
     FROM raffle.registrations
     WHERE group_id IS NOT NULL AND status = 'pending' AND raffle_id = ${params.raffleId}::uuid

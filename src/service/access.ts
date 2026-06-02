@@ -1,8 +1,6 @@
 import { sql } from "bun";
 import {
   createAccess,
-  updateAccess as cloudUpdateAccess,
-  deleteAccess,
   getEffectivePermission,
   resolveDisplayNames,
   type Principal,
@@ -80,56 +78,57 @@ export const update = async (
   accessId: string,
   permission: PermissionLevel,
 ): Promise<MutationResult<void>> => {
-  // Verify this access entry belongs to this raffle
-  const [row] = await sql<{ access_id: string }[]>`
-    SELECT access_id FROM raffle.raffle_access
-    WHERE raffle_id = ${raffleId}::uuid AND access_id = ${accessId}::uuid
-  `;
-  if (!row) return { ok: false, error: "Eintrag nicht gefunden.", status: 404 };
-
-  // Prevent removing the last admin
-  if (permission !== "admin") {
-    const ids = await getAccessIds(raffleId);
-    const rows = await sql<{ count: number }[]>`
-      SELECT COUNT(*)::int AS count FROM auth.access
-      WHERE id = ANY(${`{${ids.join(",")}}`}::uuid[]) AND permission = 'admin'
-        AND id != ${accessId}::uuid
+  // Check und Update in einer Transaction mit Row-Locks auf allen Access-
+  // Zeilen dieser Verlosung. So können zwei parallele Änderungen nicht beide
+  // die Last-Admin-Prüfung bestehen und gemeinsam alle Admins entfernen.
+  return sql.begin(async (tx) => {
+    const accessRows = await tx<{ id: string; permission: PermissionLevel }[]>`
+      SELECT a.id, a.permission
+      FROM auth.access a
+      JOIN raffle.raffle_access ra ON ra.access_id = a.id
+      WHERE ra.raffle_id = ${raffleId}::uuid
+      FOR UPDATE OF a
     `;
-    if ((rows[0]?.count ?? 0) === 0) {
-      return { ok: false, error: "Es muss mindestens einen Admin geben.", status: 400 };
-    }
-  }
+    const target = accessRows.find((r) => r.id === accessId);
+    if (!target) return { ok: false as const, error: "Eintrag nicht gefunden.", status: 404 as const };
 
-  const result = await cloudUpdateAccess({ id: accessId, permission });
-  if (!result.ok) return { ok: false, error: result.error.message, status: 400 };
-  return { ok: true, data: undefined };
+    if (permission !== "admin") {
+      const otherAdmins = accessRows.filter((r) => r.id !== accessId && r.permission === "admin").length;
+      if (otherAdmins === 0) {
+        return { ok: false as const, error: "Es muss mindestens einen Admin geben.", status: 400 as const };
+      }
+    }
+
+    await tx`
+      UPDATE auth.access SET permission = ${permission}::auth.permission_level
+      WHERE id = ${accessId}::uuid
+    `;
+    return { ok: true as const, data: undefined };
+  });
 };
 
 export const revoke = async (
   raffleId: string,
   accessId: string,
 ): Promise<MutationResult<void>> => {
-  const [row] = await sql<{ access_id: string }[]>`
-    SELECT access_id FROM raffle.raffle_access
-    WHERE raffle_id = ${raffleId}::uuid AND access_id = ${accessId}::uuid
-  `;
-  if (!row) return { ok: false, error: "Eintrag nicht gefunden.", status: 404 };
+  return sql.begin(async (tx) => {
+    const accessRows = await tx<{ id: string; permission: PermissionLevel }[]>`
+      SELECT a.id, a.permission
+      FROM auth.access a
+      JOIN raffle.raffle_access ra ON ra.access_id = a.id
+      WHERE ra.raffle_id = ${raffleId}::uuid
+      FOR UPDATE OF a
+    `;
+    const target = accessRows.find((r) => r.id === accessId);
+    if (!target) return { ok: false as const, error: "Eintrag nicht gefunden.", status: 404 as const };
 
-  // Prevent revoking the last admin
-  const ids = await getAccessIds(raffleId);
-  const [adminCount] = await sql<{ count: number }[]>`
-    SELECT COUNT(*)::int AS count FROM auth.access
-    WHERE id = ANY(${`{${ids.join(",")}}`}::uuid[]) AND permission = 'admin'
-      AND id != ${accessId}::uuid
-  `;
-  const [thisEntry] = await sql<{ permission: string }[]>`
-    SELECT permission FROM auth.access WHERE id = ${accessId}::uuid
-  `;
-  if (thisEntry?.permission === "admin" && (adminCount?.count ?? 0) === 0) {
-    return { ok: false, error: "Der letzte Admin kann nicht entfernt werden.", status: 400 };
-  }
+    const otherAdmins = accessRows.filter((r) => r.id !== accessId && r.permission === "admin").length;
+    if (target.permission === "admin" && otherAdmins === 0) {
+      return { ok: false as const, error: "Der letzte Admin kann nicht entfernt werden.", status: 400 as const };
+    }
 
-  await sql`DELETE FROM raffle.raffle_access WHERE raffle_id = ${raffleId}::uuid AND access_id = ${accessId}::uuid`;
-  await deleteAccess({ id: accessId });
-  return { ok: true, data: undefined };
+    await tx`DELETE FROM raffle.raffle_access WHERE raffle_id = ${raffleId}::uuid AND access_id = ${accessId}::uuid`;
+    await tx`DELETE FROM auth.access WHERE id = ${accessId}::uuid`;
+    return { ok: true as const, data: undefined };
+  });
 };

@@ -209,6 +209,13 @@ export const migrate = async (): Promise<void> => {
   await sql`ALTER TABLE raffle.raffles ADD COLUMN IF NOT EXISTS reg_email_body TEXT`.simple();
   console.log("  ✓ raffle.raffles reg_email columns");
 
+  // ── Idempotenz-Marker für Ergebnis-Mails (Finalisierung) ─────────────────
+  await sql`
+    ALTER TABLE raffle.registrations
+    ADD COLUMN IF NOT EXISTS result_email_sent_at TIMESTAMPTZ
+  `.simple();
+  console.log("  ✓ raffle.registrations result_email_sent_at column");
+
   // ── raffle_id auf registrations ──────────────────────────────────────────
   await sql`
     ALTER TABLE raffle.registrations

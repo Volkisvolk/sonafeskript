@@ -1,6 +1,8 @@
 import { sql } from "bun";
-import { settings } from "@valentinkolb/cloud/services";
+import { settings, logger } from "@valentinkolb/cloud/services";
 import type { MutationResult } from "@valentinkolb/cloud/contracts";
+
+const log = logger("raffle.registrations");
 import type {
   Registration,
   Register,
@@ -133,13 +135,51 @@ export const create = async (params: {
     };
   }
 
+  // ── Mail-Abuse-Schutz: Cooldown pro Zieladresse ──────────────────────────
+  // Begrenzt, wie oft eine einzelne E-Mail-Adresse (über alle Verlosungen)
+  // Bestätigungsmails auslösen kann. Schützt davor, dass ein Angreifer eine
+  // fremde Adresse über die Plattform mit Mails flutet. Pro-Verlosung-
+  // Eindeutigkeit oben verhindert Wiederholung in derselben Verlosung.
+  // Konfigurierbar über raffle.register_cooldown_seconds (0 = aus).
+  const cooldownSecs = (await settings.get<number>("raffle.register_cooldown_seconds")) ?? 15;
+  if (cooldownSecs > 0) {
+    const [recent] = await sql<{ created_at: Date }[]>`
+      SELECT created_at FROM raffle.registrations
+      WHERE LOWER(email) = LOWER(${data.email})
+        AND created_at > now() - make_interval(secs => ${cooldownSecs})
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    if (recent) {
+      log.warn("register.cooldown.blocked", { raffleId, emailDomain: data.email.split("@")[1] ?? "?" });
+      return {
+        ok: false,
+        error: "Zu viele Anmeldungen in kurzer Zeit. Bitte versuche es in einem Moment erneut.",
+        status: 400,
+      };
+    }
+  }
+
   const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
 
-  // Gruppengröße-Check und INSERT in einer Transaction mit Row-Lock,
-  // damit parallele Requests die Gruppe nicht überfüllen können.
+  // Status-Check, Gruppengröße-Check und INSERT in einer Transaction mit
+  // Row-Locks. Die Raffle-Zeile wird mit FOR SHARE gesperrt: Damit kann
+  // runRaffle (FOR UPDATE / Status-Wechsel) erst weiterlaufen, wenn diese
+  // Registrierung committed ist – kein Timing-Fenster für Spät-Anmeldungen.
   let row: DbRegistration | undefined;
   try {
     const rows = await sql.begin(async (tx) => {
+      // Raffle-Zeile sperren und Status atomar prüfen
+      const [raffleRow] = await tx<{ status: string }[]>`
+        SELECT status FROM raffle.raffles WHERE id = ${raffleId}::uuid FOR SHARE
+      `;
+      if (!raffleRow) {
+        throw Object.assign(new Error("RAFFLE_NOT_FOUND"), {});
+      }
+      if (raffleRow.status !== "open") {
+        throw Object.assign(new Error("RAFFLE_CLOSED"), {});
+      }
+
       if (groupId) {
         // Sperrt die Gruppe-Zeile für die Dauer der Transaction
         await tx`SELECT id FROM raffle.groups WHERE id = ${groupId}::uuid FOR UPDATE`;
@@ -171,6 +211,16 @@ export const create = async (params: {
       return {
         ok: false,
         error: `Die Gruppe hat bereits die maximale Größe von ${e.maxGroupSize} Personen erreicht.`,
+        status: 400,
+      };
+    }
+    if (e.message === "RAFFLE_NOT_FOUND") {
+      return { ok: false, error: "Verlosung nicht gefunden.", status: 404 };
+    }
+    if (e.message === "RAFFLE_CLOSED") {
+      return {
+        ok: false,
+        error: "Die Anmeldephase ist bereits beendet. Neue Registrierungen sind nicht mehr möglich.",
         status: 400,
       };
     }
@@ -500,8 +550,11 @@ type RawRegistration = {
   group_id: string | null;
 };
 
-export const listAllRaw = async (params: { raffleId: string }): Promise<RawRegistration[]> => {
-  return sql<RawRegistration[]>`
+export const listAllRaw = async (
+  params: { raffleId: string },
+  db: typeof sql = sql,
+): Promise<RawRegistration[]> => {
+  return db<RawRegistration[]>`
     SELECT id, requested_tickets, group_id
     FROM raffle.registrations
     WHERE status = 'pending' AND raffle_id = ${params.raffleId}::uuid

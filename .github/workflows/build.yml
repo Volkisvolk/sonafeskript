@@ -15,6 +15,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
 
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +27,19 @@ jobs:
 
       - name: Build app
         run: bun run build
+
+      # Gezielter Typecheck: blockiert nur bei Fehlern im App-Code (src/).
+      # Bekannte Typprobleme in Dritt-Paketen (fehlende @types, stdlib) werden
+      # bewusst nicht als Blocker gewertet, da nicht von uns behebbar.
+      - name: Typecheck (application code)
+        run: |
+          bunx tsc --noEmit > tsc.out 2>&1 || true
+          cat tsc.out
+          if grep -E '^src/.*error TS' tsc.out; then
+            echo "::error::TypeScript-Fehler im App-Code (src/) gefunden"
+            exit 1
+          fi
+          echo "OK: keine Typfehler in src/"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -43,6 +57,28 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
 
+      # Image zuerst lokal bauen (kein Push), damit es vor dem Veröffentlichen
+      # gescannt werden kann. Layer werden gecacht → der Push-Build ist schnell.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Container-Scan: blockiert bei behebbaren CRITICAL/HIGH-Schwachstellen.
+      # ignore-unfixed verhindert Blockieren durch nicht-patchbare Base-Image-CVEs.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -50,3 +86,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max

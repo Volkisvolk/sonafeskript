@@ -30,12 +30,12 @@ export const runRaffle = async (
       }
       const contingent = claimed.ticket_contingent;
 
-      const allPending = await registrationsService.listAllRaw({ raffleId });
+      const allPending = await registrationsService.listAllRaw({ raffleId }, tx);
       if (allPending.length === 0) {
         throw Object.assign(new Error("Keine Anmeldungen vorhanden."), { status: 400 });
       }
 
-      const groups = await groupsService.listGroupsWithMembers({ raffleId });
+      const groups = await groupsService.listGroupsWithMembers({ raffleId }, tx);
       const inGroupIds = new Set(groups.flatMap((g) => g.members.map((m) => m.id)));
 
       type Unit =
@@ -130,7 +130,8 @@ export const resetRaffle = async (raffleId: string): Promise<MutationResult<void
   await sql`
     UPDATE raffle.registrations
     SET status = 'pending', won_tickets = NULL, qr_token = NULL,
-        paid_at = NULL, collected_at = NULL, collected_by = NULL
+        paid_at = NULL, collected_at = NULL, collected_by = NULL,
+        result_email_sent_at = NULL
     WHERE raffle_id = ${raffleId}::uuid AND status IN ('won', 'lost')
   `;
 
@@ -144,8 +145,12 @@ export const resetRaffle = async (raffleId: string): Promise<MutationResult<void
 export const finalizeRaffle = async (
   raffleId: string,
 ): Promise<MutationResult<{ emailsSent: number; errors: number }>> => {
+  // Status muss 'raffled' (Erstlauf) oder 'finalized' (Wiederholung nach
+  // Teil-Fehler) sein. Die eigentliche Idempotenz-Garantie liegt aber im
+  // per-Registrierung Marker `result_email_sent_at`: Nur wer den atomar
+  // claimt, sendet die Mail – auch bei parallelen Finalize-Requests.
   const status = await rafflesService.getStatus(raffleId);
-  if (status !== "raffled") {
+  if (status !== "raffled" && status !== "finalized") {
     return {
       ok: false,
       error: "Finalisieren ist nur im Status 'Verlost (noch keine Mails)' möglich.",
@@ -176,6 +181,16 @@ export const finalizeRaffle = async (
   for (const reg of allRegistrations) {
     if (reg.status === "pending") continue;
 
+    // Atomarer Claim: nur wer den Marker exklusiv setzt, sendet die Mail.
+    // Verhindert Doppelversand bei parallelen oder wiederholten Finalize-Läufen.
+    const [claimed] = await sql<{ id: string }[]>`
+      UPDATE raffle.registrations
+      SET result_email_sent_at = now()
+      WHERE id = ${reg.id}::uuid AND raffle_id = ${raffleId}::uuid AND result_email_sent_at IS NULL
+      RETURNING id
+    `;
+    if (!claimed) continue; // bereits versendet
+
     try {
       if (reg.status === "won") {
         const subject = (winSubject ?? "Herzlichen Glückwunsch!")
@@ -200,37 +215,36 @@ export const finalizeRaffle = async (
           </div>
         `;
 
-        await notifications
-          .send({
-            type: "email",
-            recipient: reg.email,
-            subject,
-            rawHtml,
-            ...(replyTo ? { replyTo } : {}),
-          })
-          .catch((e) => {
-            log.error("raffle.finalize.win-mail.failed", { registrationId: reg.id, message: e.message });
-          });
+        await notifications.send({
+          type: "email",
+          recipient: reg.email,
+          subject,
+          rawHtml,
+          ...(replyTo ? { replyTo } : {}),
+        });
       } else {
         const subject = (lossSubject ?? "Leider kein Glück").replace("{{name}}", reg.name);
         const content = (lossBody ?? "Hallo {{name}}, leider kein Glück.")
           .replace(/{{name}}/g, reg.name);
 
-        await notifications
-          .send({
-            type: "email",
-            recipient: reg.email,
-            subject,
-            content,
-            ...(replyTo ? { replyTo } : {}),
-          })
-          .catch((e) => {
-            log.error("raffle.finalize.loss-mail.failed", { registrationId: reg.id, message: e.message });
-          });
+        await notifications.send({
+          type: "email",
+          recipient: reg.email,
+          subject,
+          content,
+          ...(replyTo ? { replyTo } : {}),
+        });
       }
       emailsSent++;
     } catch (e: any) {
-      log.error("raffle.finalize.mail.error", { registrationId: reg.id, message: e.message });
+      // Mail fehlgeschlagen → Marker zurücksetzen, damit ein erneuter
+      // Finalize-Lauf diese Registrierung wieder aufgreift.
+      await sql`
+        UPDATE raffle.registrations
+        SET result_email_sent_at = NULL
+        WHERE id = ${reg.id}::uuid
+      `.catch(() => {});
+      log.error("raffle.finalize.mail.error", { registrationId: reg.id, message: e?.message });
       errors++;
     }
   }

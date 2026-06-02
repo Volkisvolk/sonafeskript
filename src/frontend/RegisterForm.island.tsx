@@ -1,6 +1,6 @@
 import { createSignal, createResource, Show } from "solid-js";
 import { prompts } from "@valentinkolb/cloud/ui";
-import { parseLinks } from "./lib/links";
+import { LinkText } from "./lib/links";
 
 interface Props {
   raffleId: string;
@@ -272,7 +272,7 @@ export default function RegisterForm(props: Props) {
                 checked={agb()}
                 onChange={(e) => setAgb(e.currentTarget.checked)}
               />
-              <span class="text-xs text-dimmed leading-relaxed" innerHTML={parseLinks(props.agbText)} />
+              <LinkText text={props.agbText} class="text-xs text-dimmed leading-relaxed" />
             </label>
           </div>
 

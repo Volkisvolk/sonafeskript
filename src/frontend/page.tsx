@@ -2,7 +2,7 @@ import { ssr } from "../config";
 import { type AuthContext } from "@valentinkolb/cloud/server";
 import { Layout } from "@valentinkolb/cloud/ssr";
 import { raffleService } from "@/service";
-import { parseLinks } from "./lib/links";
+import { LinkText } from "./lib/links";
 
 export default ssr<AuthContext>(async (c) => {
   const user = c.get("user");
@@ -52,7 +52,7 @@ export default ssr<AuthContext>(async (c) => {
                     <div>
                       <h2 class="text-base font-semibold text-primary">{raffle.name}</h2>
                       {raffle.description ? (
-                        <p class="text-sm text-dimmed mt-1" innerHTML={parseLinks(raffle.description)} />
+                        <LinkText text={raffle.description} class="text-sm text-dimmed mt-1 block" />
                       ) : null}
                     </div>
                     <span class="text-xs font-medium px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 shrink-0">

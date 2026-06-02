@@ -4,7 +4,7 @@ import { Layout } from "@valentinkolb/cloud/ssr";
 import { settings } from "@valentinkolb/cloud/services";
 import { raffleService } from "@/service";
 import RegisterForm from "../RegisterForm.island";
-import { parseLinks } from "../lib/links";
+import { LinkText } from "../lib/links";
 import RaffleFaq from "../RaffleFaq.island";
 
 export default ssr<AuthContext>(async (c) => {
@@ -67,7 +67,7 @@ export default ssr<AuthContext>(async (c) => {
           </div>
           <h1 class="text-2xl font-bold text-primary mb-1">{raffle.name}</h1>
           {raffle.description ? (
-            <p class="text-sm text-dimmed" innerHTML={parseLinks(raffle.description)} />
+            <LinkText text={raffle.description} class="text-sm text-dimmed block" />
           ) : (
             <p class="text-sm text-dimmed">Melde dich an und nimm an der Verlosung teil.</p>
           )}

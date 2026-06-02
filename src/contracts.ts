@@ -115,6 +115,10 @@ export type ExternalLink = z.infer<typeof ExternalLinkSchema>;
 
 const safeUrl = (errorMsg?: string) =>
   z.string().superRefine((val, ctx) => {
+    if (val.length > 1000) {
+      ctx.addIssue({ code: "custom", message: "URL ist zu lang." });
+      return;
+    }
     let url: URL;
     try { url = new URL(val); } catch {
       ctx.addIssue({ code: "custom", message: errorMsg ?? "Bitte gib eine gültige URL ein." });
@@ -166,29 +170,73 @@ export const RaffleItemSchema = z.object({
 });
 export type RaffleItem = z.infer<typeof RaffleItemSchema>;
 
+// CSS background-position: nur Werte wie "50% 50%" / "0% 100%" zulassen
+const bannerPositionRe = /^\d{1,3}% \d{1,3}%$/;
+
+// Banner: entweder http(s)-URL oder hochgeladenes Inline-Bild (data:image/...).
+// data:text/html o.ä. wird abgelehnt; im <img src> würde es zwar nicht
+// ausgeführt, aber wir lassen bewusst nur Bild-Datentypen zu.
+const dataImageRe = /^data:image\/(png|jpe?g|webp|gif|avif);base64,[A-Za-z0-9+/=]+$/;
+const safeBannerUrl = () =>
+  z.string().superRefine((val, ctx) => {
+    if (val.length > 15_000_000) {
+      ctx.addIssue({ code: "custom", message: "Bild ist zu groß." });
+      return;
+    }
+    if (dataImageRe.test(val)) return;
+    let url: URL;
+    try { url = new URL(val); } catch {
+      ctx.addIssue({ code: "custom", message: "Ungültige Banner-URL." });
+      return;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      ctx.addIssue({ code: "custom", message: "Banner muss ein Bild-Upload oder eine http(s)-URL sein." });
+    }
+  });
+
+// E-Mail-Subject/Body-Limits (öffentlich sichtbare / versendete Texte)
+const SUBJECT_MAX = 300;
+const BODY_MAX = 10_000;
+
 export const CreateRaffleSchema = z.object({
-  name: z.string().min(1, "Name ist erforderlich"),
-  description: z.string().optional(),
-  ticketContingent: z.number().int().positive().default(100),
+  name: z.string().min(1, "Name ist erforderlich").max(200, "Name ist zu lang"),
+  description: z.string().max(2000, "Beschreibung ist zu lang").optional(),
+  ticketContingent: z.number().int().positive().max(1_000_000).default(100),
 });
 export type CreateRaffle = z.infer<typeof CreateRaffleSchema>;
 
 export const UpdateRaffleSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  description: z.string().nullable().optional(),
-  ticketContingent: z.number().int().positive().optional(),
-  allowedEmailPatterns: z.array(z.string().max(200)).optional(),
-  replyToEmail: z.string().nullable().optional(),
-  winEmailSubject: z.string().nullable().optional(),
-  winEmailBody: z.string().nullable().optional(),
-  lossEmailSubject: z.string().nullable().optional(),
-  lossEmailBody: z.string().nullable().optional(),
-  bannerUrl: z.string().nullable().optional(),
-  bannerPosition: z.string().optional(),
-  faqItems: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).optional(),
-  agbText: z.string().nullable().optional(),
-  regEmailSubject: z.string().nullable().optional(),
-  regEmailBody: z.string().nullable().optional(),
+  description: z.string().max(2000, "Beschreibung ist zu lang").nullable().optional(),
+  ticketContingent: z.number().int().positive().max(1_000_000).optional(),
+  allowedEmailPatterns: z.array(z.string().max(200)).max(50, "Zu viele Muster").optional(),
+  replyToEmail: z
+    .string()
+    .email("Bitte gib eine gültige Antwort-Adresse ein")
+    .max(300)
+    .nullable()
+    .optional(),
+  winEmailSubject: z.string().max(SUBJECT_MAX).nullable().optional(),
+  winEmailBody: z.string().max(BODY_MAX).nullable().optional(),
+  lossEmailSubject: z.string().max(SUBJECT_MAX).nullable().optional(),
+  lossEmailBody: z.string().max(BODY_MAX).nullable().optional(),
+  bannerUrl: safeBannerUrl().nullable().optional(),
+  bannerPosition: z
+    .string()
+    .regex(bannerPositionRe, "Ungültige Banner-Position (Format: \"50% 50%\")")
+    .optional(),
+  faqItems: z
+    .array(
+      z.object({
+        q: z.string().min(1).max(300, "Frage ist zu lang"),
+        a: z.string().min(1).max(2000, "Antwort ist zu lang"),
+      }),
+    )
+    .max(50, "Zu viele FAQ-Einträge")
+    .optional(),
+  agbText: z.string().max(BODY_MAX, "Text ist zu lang").nullable().optional(),
+  regEmailSubject: z.string().max(SUBJECT_MAX).nullable().optional(),
+  regEmailBody: z.string().max(BODY_MAX).nullable().optional(),
 });
 export type UpdateRaffle = z.infer<typeof UpdateRaffleSchema>;
 
