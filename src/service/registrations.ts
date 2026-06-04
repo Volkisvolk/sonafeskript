@@ -296,6 +296,45 @@ export const confirmRegistration = async (
   return { outcome: "confirmed", raffleId: existing.raffle_id, name: existing.name };
 };
 
+// ── Ticket-Lookup per QR-Token (für die öffentliche Ticket-Seite) ────────────────
+// Der qr_token ist ein unguessbares Zufallstoken und dient als Zugang zur
+// Ticket-Seite (analog zum Bestätigungs-Token).
+
+export type TicketInfo = {
+  id: string;
+  name: string;
+  status: "pending" | "won" | "lost";
+  wonTickets: number | null;
+  raffleId: string;
+  raffleName: string;
+};
+
+export const getTicketByToken = async (token: string): Promise<TicketInfo | null> => {
+  if (!token || token.length < 16) return null;
+  const [row] = await sql<{
+    id: string;
+    name: string;
+    status: string;
+    won_tickets: number | null;
+    raffle_id: string;
+    raffle_name: string;
+  }[]>`
+    SELECT r.id, r.name, r.status, r.won_tickets, r.raffle_id, ra.name AS raffle_name
+    FROM raffle.registrations r
+    JOIN raffle.raffles ra ON ra.id = r.raffle_id
+    WHERE r.qr_token = ${token}
+  `;
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status as TicketInfo["status"],
+    wonTickets: row.won_tickets,
+    raffleId: row.raffle_id,
+    raffleName: row.raffle_name,
+  };
+};
+
 // ── Read ──────────────────────────────────────────────────────────────────────
 
 export const get = async (params: { id: string; raffleId?: string }): Promise<Registration | null> => {

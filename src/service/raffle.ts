@@ -1,6 +1,5 @@
 import { sql } from "bun";
 import { settings, notifications, logger } from "@valentinkolb/cloud/services";
-import QRCode from "qrcode";
 import * as registrationsService from "./registrations";
 import * as groupsService from "./groups";
 import * as rafflesService from "./raffles";
@@ -160,12 +159,13 @@ export const finalizeRaffle = async (
 
   const raffle = await rafflesService.get(raffleId);
 
-  const [globalWinSubject, globalWinBody, globalLossSubject, globalLossBody, globalReplyTo] = await Promise.all([
+  const [globalWinSubject, globalWinBody, globalLossSubject, globalLossBody, globalReplyTo, rawAppUrl] = await Promise.all([
     settings.get<string>("raffle.win_email_subject"),
     settings.get<string>("raffle.win_email_body"),
     settings.get<string>("raffle.loss_email_subject"),
     settings.get<string>("raffle.loss_email_body"),
     settings.get<string>("raffle.reply_to_email"),
+    settings.get<string>("app.url"),
   ]);
 
   const winSubject = raffle?.winEmailSubject ?? globalWinSubject;
@@ -173,6 +173,7 @@ export const finalizeRaffle = async (
   const lossSubject = raffle?.lossEmailSubject ?? globalLossSubject;
   const lossBody = raffle?.lossEmailBody ?? globalLossBody;
   const replyTo = raffle?.replyToEmail ?? globalReplyTo;
+  const appUrl = (rawAppUrl ?? "").startsWith("http") ? (rawAppUrl ?? "") : `https://${rawAppUrl ?? ""}`;
 
   const allRegistrations = await registrationsService.listAll({ raffleId });
   let emailsSent = 0;
@@ -201,19 +202,15 @@ export const finalizeRaffle = async (
           .replace(/{{name}}/g, reg.name)
           .replace(/{{won_tickets}}/g, String(reg.wonTickets ?? 1));
 
-        const qrData = reg.qrToken ?? reg.id;
-        const qrDataUrl = await QRCode.toDataURL(qrData, { width: 200, margin: 1 });
-
+        // Der QR-Code kann nicht als Bild in die Mail (der Mail-Sanitizer
+        // entfernt <img>). Stattdessen Link zur Ticket-Seite, die den QR-Code
+        // zum Vorzeigen/Scannen rendert. Zugang über den geheimen qr_token.
         const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const rawHtml = `
-          <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-            <p style="white-space:pre-wrap">${escHtml(bodyText)}</p>
-            <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-            <p style="color:#666;font-size:14px">Dein QR-Code für die Kartenabholung:</p>
-            <img src="${qrDataUrl}" alt="QR-Code" style="width:200px;height:200px;display:block;margin:8px 0"/>
-            <p style="color:#999;font-size:12px">Referenz-ID: ${reg.id}</p>
-          </div>
-        `;
+        const ticketUrl = `${appUrl.replace(/\/$/, "")}/app/raffle/ticket/${reg.qrToken ?? ""}`;
+        const rawHtml =
+          `<p style="white-space:pre-wrap">${escHtml(bodyText)}</p>` +
+          `<p><a href="${ticketUrl}">Dein Ticket mit QR-Code anzeigen</a></p>` +
+          `<p><span>Zeige den QR-Code beim Abholen vor.</span></p>`;
 
         await notifications.send({
           type: "email",

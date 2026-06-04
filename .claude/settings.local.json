@@ -23,7 +23,19 @@
       "Bash(Sort-Object)",
       "PowerShell(docker compose logs app-raffle --tail=20 2>&1)",
       "Bash(curl -sv http://localhost:3000/app/raffle/my)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git rm *)",
+      "Bash(bun install *)",
+      "Bash(echo \"=== src/ errors: $\\(bunx tsc --noEmit 2>&1)",
+      "Bash(docker exec *)",
+      "Bash(docker cp *)",
+      "Bash(rm -f cdtest.ts)",
+      "Bash(git add *)",
+      "Bash(git restore *)",
+      "Bash(git push *)",
+      "Bash(xargs echo \"src errors:\")",
+      "Bash(echo \"src errors: $\\(bunx tsc --noEmit 2>&1)",
+      "Bash(docker info *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Volkan\\Desktop\\SonaFeSkript\\my-cloud\\src\\frontend\\admin\\[id]"
