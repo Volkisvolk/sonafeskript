@@ -203,7 +203,7 @@ const app = new Hono<AuthContext>()
             rawHtml:
               `<p>Hallo ${esc(data.name)},</p>` +
               `<p>bitte bestätige deine Anmeldung für „${esc(raffle.name)}", indem du auf den folgenden Link klickst:</p>` +
-              `<p><a href="${confirmUrl}">Anmeldung jetzt bestätigen</a></p>` +
+              `<p><a href="${esc(confirmUrl)}">Anmeldung jetzt bestätigen</a></p>` +
               `<p><span>Erst nach der Bestätigung zählt deine Anmeldung für die Verlosung.</span></p>` +
               `<p><span>Wenn du dich nicht angemeldet hast, kannst du diese E-Mail einfach ignorieren.</span></p>`,
             ...(replyTo ? { replyTo } : {}),

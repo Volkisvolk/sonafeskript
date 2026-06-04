@@ -209,7 +209,7 @@ export const finalizeRaffle = async (
         const ticketUrl = `${appUrl.replace(/\/$/, "")}/app/raffle/ticket/${reg.qrToken ?? ""}`;
         const rawHtml =
           `<p style="white-space:pre-wrap">${escHtml(bodyText)}</p>` +
-          `<p><a href="${ticketUrl}">Dein Ticket mit QR-Code anzeigen</a></p>` +
+          `<p><a href="${escHtml(ticketUrl)}">Dein Ticket mit QR-Code anzeigen</a></p>` +
           `<p><span>Zeige den QR-Code beim Abholen vor.</span></p>`;
 
         await notifications.send({
