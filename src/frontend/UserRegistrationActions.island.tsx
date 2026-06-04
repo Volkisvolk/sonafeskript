@@ -7,9 +7,7 @@ interface Props {
   name: string;
   status: "pending" | "won" | "lost";
   paidAt: string | null;
-  collectedAt: string | null;
   wonTickets: number | null;
-  collectedTickets: number;
   requestedTickets: number;
 }
 
@@ -64,10 +62,6 @@ export default function UserRegistrationActions(props: Props) {
     if (await call(`${base()}/mark-paid`, "DELETE")) refreshCurrentPath();
   };
 
-  const setCollected = async (tickets: number) => {
-    if (await call(`${base()}/collected`, "PATCH", { tickets })) refreshCurrentPath();
-  };
-
   const handleDelete = async () => {
     const ok = await prompts.confirm(
       `Anmeldung von „${props.name}" wirklich löschen? Das kann nicht rückgängig gemacht werden.`,
@@ -78,37 +72,12 @@ export default function UserRegistrationActions(props: Props) {
   };
 
   return (
-    <div class="flex items-center justify-end gap-1.5 flex-wrap">
+    <div class="flex items-center justify-end gap-1.5">
       <Show when={props.status === "won"}>
-        {/* Teil-Abholung: Stepper, solange nicht komplett bezahlt/abgeholt */}
-        <Show when={!props.paidAt}>
-          <span class="inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 px-1">
-            <button
-              class="w-5 h-5 flex items-center justify-center text-dimmed hover:text-primary disabled:opacity-30"
-              disabled={loading() || props.collectedTickets <= 0}
-              title="Eine Karte weniger abgeholt"
-              onClick={() => setCollected(props.collectedTickets - 1)}
-            >
-              <i class="ti ti-minus text-[11px]" />
-            </button>
-            <span class="text-[11px] tabular-nums text-dimmed min-w-[42px] text-center" title="Abgeholte Karten">
-              {props.collectedTickets}/{wonCount()} abgeh.
-            </span>
-            <button
-              class="w-5 h-5 flex items-center justify-center text-dimmed hover:text-primary disabled:opacity-30"
-              disabled={loading() || props.collectedTickets >= wonCount()}
-              title="Eine Karte mehr abgeholt"
-              onClick={() => setCollected(props.collectedTickets + 1)}
-            >
-              <i class="ti ti-plus text-[11px]" />
-            </button>
-          </span>
-        </Show>
-
         <Show
           when={props.paidAt}
           fallback={
-            <button class="btn-secondary btn-sm" disabled={loading()} onClick={handlePaid} title="Markiert die Karten als bezahlt und vollständig abgeholt.">
+            <button class="btn-secondary btn-sm" disabled={loading()} onClick={handlePaid} title="Als bezahlt markieren – fragt nach der Anzahl abgeholter Karten.">
               {loading() ? <i class="ti ti-loader-2 animate-spin mr-1" /> : <i class="ti ti-coin mr-1" />}
               Bezahlt
             </button>
@@ -126,7 +95,7 @@ export default function UserRegistrationActions(props: Props) {
         </Show>
       </Show>
 
-      {/* Löschen – für alle Anmeldungen */}
+      {/* Löschen – für alle Anmeldungen, direkt neben „Bezahlt" */}
       <button
         class="w-7 h-7 flex items-center justify-center rounded text-dimmed hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
         disabled={loading()}

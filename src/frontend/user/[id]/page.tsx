@@ -310,9 +310,7 @@ export default ssr<AuthContext>(async (c) => {
                                 name={r.name}
                                 status={r.status}
                                 paidAt={r.paidAt}
-                                collectedAt={r.collectedAt}
                                 wonTickets={r.wonTickets}
-                                collectedTickets={r.collectedTickets}
                                 requestedTickets={r.requestedTickets}
                               />
                             </td>
