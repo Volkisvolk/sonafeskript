@@ -175,7 +175,7 @@ export default ssr<AuthContext>(async (c) => {
           </div>
 
           {/* ── Verlosungssteuerung ──────────────────────────────────────────── */}
-          <UserRaffleControls raffleId={raffleId} status={raffle.status} />
+          <UserRaffleControls raffleId={raffleId} status={raffle.status} unsentResultEmails={summary.unsentResultEmails} />
 
           {/* ── Einstellungen ────────────────────────────────────────────────── */}
           <UserRaffleSettings

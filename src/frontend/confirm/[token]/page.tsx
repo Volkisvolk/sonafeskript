@@ -26,6 +26,14 @@ export default ssr<AuthContext>(async (c) => {
         text: "Diese Anmeldung wurde schon bestätigt – du musst nichts weiter tun.",
       };
     }
+    if (res.outcome === "expired") {
+      return {
+        icon: "ti-clock-x",
+        tone: "text-amber-500",
+        title: "Verlosung bereits gestartet",
+        text: "Die Anmeldephase für diese Verlosung ist beendet. Dein Bestätigungslink ist deshalb abgelaufen und deine Anmeldung konnte nicht mehr in die Ziehung aufgenommen werden.",
+      };
+    }
     return {
       icon: "ti-alert-circle",
       tone: "text-red-500",

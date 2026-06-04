@@ -5,6 +5,10 @@ import type { RaffleStatus } from "@/contracts";
 interface Props {
   raffleId: string;
   status: RaffleStatus;
+  // Anzahl Gewinner/Verlierer, deren Ergebnis-Mail noch NICHT versendet wurde.
+  // > 0 nach Finalize bedeutet: Mailversand ist teilweise fehlgeschlagen und
+  // kann erneut angestoßen werden.
+  unsentResultEmails: number;
 }
 
 export default function UserRaffleControls(props: Props) {
@@ -25,10 +29,17 @@ export default function UserRaffleControls(props: Props) {
           { title: "Verlosung durchgeführt" },
         );
       } else if (endpoint === "finalize") {
-        await prompts.alert(
-          `Fertig! ${body.emailsSent} Mails wurden versendet.${body.errors > 0 ? ` (${body.errors} Fehler)` : ""}`,
-          { title: "Finalisiert" },
-        );
+        if (body.errors > 0) {
+          await prompts.error(
+            `${body.emailsSent} Mails versendet, aber ${body.errors} fehlgeschlagen.\n\nDie fehlgeschlagenen Mails wurden NICHT als versendet markiert. Klicke erneut auf „Fehlende Mails erneut senden", um sie nachzuholen.`,
+            { title: "Teilweise fehlgeschlagen" },
+          );
+        } else {
+          await prompts.alert(
+            `Fertig! ${body.emailsSent} Mails wurden versendet.`,
+            { title: "Finalisiert" },
+          );
+        }
       } else if (endpoint === "reset") {
         await prompts.alert("Verlosung wurde zurückgesetzt. Alle sind wieder 'ausstehend'.", { title: "Zurückgesetzt" });
       }
@@ -109,7 +120,32 @@ export default function UserRaffleControls(props: Props) {
         </>
       ) : null}
 
-      {props.status === "finalized" ? (
+      {props.status === "finalized" && props.unsentResultEmails > 0 ? (
+        <>
+          <span class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+            <i class="ti ti-alert-triangle" />
+            {props.unsentResultEmails} Ergebnis-Mail(s) konnten nicht versendet werden.
+          </span>
+          <span class="group relative inline-block">
+            <button
+              class="btn-warning btn-sm"
+              disabled={!!loading()}
+              onClick={async () => {
+                const ok = await prompts.confirm(
+                  `${props.unsentResultEmails} Ergebnis-Mail(s) wurden noch nicht versendet. Jetzt erneut versuchen? Bereits versendete Mails werden nicht doppelt verschickt.`,
+                  { title: "Mails erneut senden", confirmText: "Ja, erneut senden" },
+                );
+                if (ok) call("finalize");
+              }}
+            >
+              {loading() === "finalize" ? <i class="ti ti-loader-2 animate-spin mr-1" /> : <i class="ti ti-mail-forward mr-1" />}
+              Fehlende Mails erneut senden
+            </button>
+          </span>
+        </>
+      ) : null}
+
+      {props.status === "finalized" && props.unsentResultEmails === 0 ? (
         <span class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
           <i class="ti ti-circle-check" />
           Alle Mails wurden versendet. Verlosung abgeschlossen.

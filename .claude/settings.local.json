@@ -35,7 +35,13 @@
       "Bash(git push *)",
       "Bash(xargs echo \"src errors:\")",
       "Bash(echo \"src errors: $\\(bunx tsc --noEmit 2>&1)",
-      "Bash(docker info *)"
+      "Bash(docker info *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(grep -n 'href=\"${' src/api/index.ts src/service/raffle.ts)",
+      "Bash(grep -nE 'sql<|sql\\\\`' src/service/registrations.ts src/service/tickets.ts src/service/raffle.ts)",
+      "Bash(grep -iE '\\\\$\\\\{[^}]*\\\\+|concat|\\\\\" \\\\+|\\\\047 \\\\+')",
+      "Bash(xargs echo \"  Auth-Checks im API-File:\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Volkan\\Desktop\\SonaFeSkript\\my-cloud\\src\\frontend\\admin\\[id]"

@@ -193,6 +193,7 @@ export const finalizeRaffle = async (
     if (!claimed) continue; // bereits versendet
 
     try {
+      let result: { status: string; error?: string };
       if (reg.status === "won") {
         const subject = (winSubject ?? "Herzlichen Glückwunsch!")
           .replace("{{name}}", reg.name)
@@ -212,7 +213,7 @@ export const finalizeRaffle = async (
           `<p><a href="${escHtml(ticketUrl)}">Dein Ticket mit QR-Code anzeigen</a></p>` +
           `<p><span>Zeige den QR-Code beim Abholen vor.</span></p>`;
 
-        await notifications.send({
+        result = await notifications.send({
           type: "email",
           recipient: reg.email,
           subject,
@@ -224,13 +225,21 @@ export const finalizeRaffle = async (
         const content = (lossBody ?? "Hallo {{name}}, leider kein Glück.")
           .replace(/{{name}}/g, reg.name);
 
-        await notifications.send({
+        result = await notifications.send({
           type: "email",
           recipient: reg.email,
           subject,
           content,
           ...(replyTo ? { replyTo } : {}),
         });
+      }
+      // notifications.send() wirft bei SMTP-Fehlern nicht zwingend, sondern
+      // liefert status: "error". Nur bei echtem "sent" gilt die Mail als
+      // versendet – sonst Marker zurücksetzen (catch), damit ein erneuter
+      // Finalize-Lauf diese Registrierung (z. B. Gewinn-Mail mit Ticket-Link)
+      // wieder aufgreift.
+      if (result.status !== "sent") {
+        throw Object.assign(new Error(result.error ?? "Mailversand fehlgeschlagen"), { sendStatus: result.status });
       }
       emailsSent++;
     } catch (e: any) {

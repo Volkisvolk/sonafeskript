@@ -275,25 +275,44 @@ export const create = async (params: {
 
 // ── E-Mail-Bestätigung (Magic Link) ─────────────────────────────────────────────
 
-export type ConfirmOutcome = "confirmed" | "already" | "invalid";
+export type ConfirmOutcome = "confirmed" | "already" | "expired" | "invalid";
 
 export const confirmRegistration = async (
   token: string,
 ): Promise<{ outcome: ConfirmOutcome; raffleId?: string; name?: string }> => {
   if (!token || token.length < 16) return { outcome: "invalid" };
 
-  const [existing] = await sql<{ id: string; confirmed_at: Date | null; raffle_id: string; name: string }[]>`
-    SELECT id, confirmed_at, raffle_id, name FROM raffle.registrations WHERE confirm_token = ${token}
-  `;
-  if (!existing) return { outcome: "invalid" };
-  if (existing.confirmed_at) {
-    return { outcome: "already", raffleId: existing.raffle_id, name: existing.name };
-  }
+  // Bestätigung und Status-Prüfung atomar in einer Transaction. Die Raffle-
+  // Zeile wird FOR SHARE gesperrt, die Registrierung FOR UPDATE: Damit kann
+  // runRaffle (UPDATE auf raffles, Status-Wechsel) nicht parallel laufen –
+  // entweder wir bestätigen vor dem Start, oder die Verlosung ist beim Lesen
+  // bereits nicht mehr 'open' und der Link gilt als abgelaufen. Kein Fenster,
+  // in dem eine Anmeldung nach dem Verlosungsstart noch bestätigt wird.
+  return await sql.begin(async (tx) => {
+    const [existing] = await tx<
+      { id: string; confirmed_at: Date | null; raffle_id: string; name: string; raffle_status: string }[]
+    >`
+      SELECT r.id, r.confirmed_at, r.raffle_id, r.name, ra.status AS raffle_status
+      FROM raffle.registrations r
+      JOIN raffle.raffles ra ON ra.id = r.raffle_id
+      WHERE r.confirm_token = ${token}
+      FOR UPDATE OF r
+      FOR SHARE OF ra
+    `;
+    if (!existing) return { outcome: "invalid" as const };
+    if (existing.confirmed_at) {
+      return { outcome: "already" as const, raffleId: existing.raffle_id, name: existing.name };
+    }
+    if (existing.raffle_status !== "open") {
+      // Verlosung läuft/lief bereits → Bestätigung kommt zu spät.
+      return { outcome: "expired" as const, raffleId: existing.raffle_id, name: existing.name };
+    }
 
-  await sql`
-    UPDATE raffle.registrations SET confirmed_at = now() WHERE id = ${existing.id}::uuid AND confirmed_at IS NULL
-  `;
-  return { outcome: "confirmed", raffleId: existing.raffle_id, name: existing.name };
+    await tx`
+      UPDATE raffle.registrations SET confirmed_at = now() WHERE id = ${existing.id}::uuid AND confirmed_at IS NULL
+    `;
+    return { outcome: "confirmed" as const, raffleId: existing.raffle_id, name: existing.name };
+  });
 };
 
 // ── Ticket-Lookup per QR-Token (für die öffentliche Ticket-Seite) ────────────────
@@ -549,6 +568,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
   paid: number;
   collected: number;
   unconfirmed: number;
+  unsentResultEmails: number;
   totalRequestedTickets: number;
   totalWonTickets: number;
   totalCollectedTickets: number;
@@ -564,6 +584,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     paid: number;
     collected: number;
     unconfirmed: number;
+    unsent_result_emails: number;
     total_requested: number;
     total_won: number;
     total_collected_tickets: number;
@@ -576,6 +597,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
       COUNT(*) FILTER (WHERE paid_at IS NOT NULL)::int AS paid,
       COUNT(*) FILTER (WHERE collected_at IS NOT NULL)::int AS collected,
       COUNT(*) FILTER (WHERE confirmed_at IS NULL)::int AS unconfirmed,
+      COUNT(*) FILTER (WHERE status IN ('won', 'lost') AND result_email_sent_at IS NULL)::int AS unsent_result_emails,
       COALESCE(SUM(requested_tickets) FILTER (WHERE confirmed_at IS NOT NULL), 0)::int AS total_requested,
       COALESCE(SUM(won_tickets) FILTER (WHERE confirmed_at IS NOT NULL), 0)::int AS total_won,
       COALESCE(SUM(collected_tickets), 0)::int AS total_collected_tickets
@@ -590,6 +612,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     paid: row?.paid ?? 0,
     collected: row?.collected ?? 0,
     unconfirmed: row?.unconfirmed ?? 0,
+    unsentResultEmails: row?.unsent_result_emails ?? 0,
     totalRequestedTickets: row?.total_requested ?? 0,
     totalWonTickets: row?.total_won ?? 0,
     totalCollectedTickets: row?.total_collected_tickets ?? 0,
