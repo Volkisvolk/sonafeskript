@@ -76,7 +76,7 @@ export const markPaid = async (params: {
     UPDATE raffle.registrations
     SET paid_at = now(),
         collected_tickets = ${collected},
-        collected_at = ${fullyCollected ? sql`now()` : sql`NULL`}
+        collected_at = CASE WHEN ${fullyCollected} THEN now() ELSE NULL END
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
@@ -221,7 +221,7 @@ export const setCollected = async (params: {
   await sql`
     UPDATE raffle.registrations
     SET collected_tickets = ${params.tickets},
-        collected_at = ${fullyCollected ? sql`now()` : sql`NULL`}
+        collected_at = CASE WHEN ${fullyCollected} THEN now() ELSE NULL END
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
