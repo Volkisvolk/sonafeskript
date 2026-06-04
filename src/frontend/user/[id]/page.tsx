@@ -295,7 +295,13 @@ export default ssr<AuthContext>(async (c) => {
                               {r.status === "won" && r.wonTickets != null ? r.wonTickets : r.requestedTickets}
                             </td>
                             <td class={`px-3 py-2 ${STATUS_CLASS[r.status]}`}>
-                              {STATUS_LABEL[r.status]}
+                              {r.confirmedAt ? (
+                                STATUS_LABEL[r.status]
+                              ) : (
+                                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" title="E-Mail-Bestätigung steht noch aus – zählt noch nicht für die Verlosung.">
+                                  <i class="ti ti-mail-exclamation" /> Unbestätigt
+                                </span>
+                              )}
                             </td>
                             <td class="px-3 py-2">
                               <UserRegistrationActions

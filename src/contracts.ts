@@ -29,6 +29,7 @@ export const RegistrationSchema = z.object({
   collectedAt: z.string().nullable().describe("Zeitpunkt der vollständigen Abholung (ISO)"),
   collectedTickets: z.number().int().describe("Anzahl bereits abgeholter Karten"),
   collectedBy: z.string().nullable().describe("Abgeholt von (E-Mail bei Vollmacht)"),
+  confirmedAt: z.string().nullable().describe("Zeitpunkt der E-Mail-Bestätigung (ISO) oder null"),
   createdAt: z.string().describe("Anmeldezeitpunkt (ISO)"),
 });
 export type Registration = z.infer<typeof RegistrationSchema>;
@@ -63,6 +64,7 @@ export const RegisterResponseSchema = z.object({
   message: z.string(),
   registrationId: z.string(),
   inviteCode: z.string().optional(),
+  requiresConfirmation: z.boolean().optional(),
 });
 
 // ── Groups ───────────────────────────────────────────────────────────────────

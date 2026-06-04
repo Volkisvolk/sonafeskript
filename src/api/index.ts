@@ -168,56 +168,83 @@ const app = new Hono<AuthContext>()
         return c.json({ error: true, message: result.error }, result.status ?? 400);
       }
 
-      const registrationId = result.data.id;
+      const { registration, confirmToken, requiresConfirmation, resent } = result.data;
+      const registrationId = registration.id;
 
-      if (data.createGroupName) {
+      // Gruppe nur bei einer echten Neu-Anmeldung anlegen (nicht beim erneuten
+      // Versenden des Bestätigungslinks für eine bestehende, unbestätigte Anmeldung).
+      if (data.createGroupName && !resent) {
         const groupResult = await raffleService.groups.create({
           name: data.createGroupName,
           raffleId,
           creatorRegistrationId: registrationId,
         });
         if (!groupResult.ok) {
-          // Registrierung rückgängig machen damit kein verwaister Eintrag bleibt
           await raffleService.registrations.remove({ id: registrationId, raffleId });
           return c.json({ error: true, message: groupResult.error }, 500);
         }
         inviteCode = groupResult.data.inviteCode;
       }
 
-      // ── Anmeldungs-Bestätigungsmail ─────────────────────────────────────────
+      const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const replyTo = raffle.replyToEmail ?? (await settings.get<string>("raffle.reply_to_email"));
+
+      if (requiresConfirmation && confirmToken) {
+        // ── Magic-Link-Bestätigungsmail ──────────────────────────────────────
+        const rawAppUrl = (await settings.get<string>("app.url")) ?? "";
+        const appUrl = rawAppUrl.startsWith("http") ? rawAppUrl : `https://${rawAppUrl}`;
+        const confirmUrl = `${appUrl.replace(/\/$/, "")}/app/raffle/confirm/${confirmToken}`;
+
+        await notifications
+          .send({
+            type: "email",
+            recipient: data.email,
+            subject: `Bitte bestätige deine Anmeldung für ${raffle.name}`,
+            rawHtml:
+              `<p>Hallo ${esc(data.name)},</p>` +
+              `<p>bitte bestätige deine Anmeldung für „${esc(raffle.name)}", indem du auf den folgenden Link klickst:</p>` +
+              `<p><a href="${confirmUrl}">Anmeldung jetzt bestätigen</a></p>` +
+              `<p><span>Erst nach der Bestätigung zählt deine Anmeldung für die Verlosung.</span></p>` +
+              `<p><span>Wenn du dich nicht angemeldet hast, kannst du diese E-Mail einfach ignorieren.</span></p>`,
+            ...(replyTo ? { replyTo } : {}),
+          })
+          .catch(() => {});
+
+        return c.json({
+          message: resent
+            ? `Wir haben dir einen neuen Bestätigungslink an ${data.email} geschickt. Bitte bestätige deine Anmeldung darüber.`
+            : `Fast geschafft! Wir haben dir einen Bestätigungslink an ${data.email} geschickt. Erst nach der Bestätigung zählt deine Anmeldung.`,
+          registrationId,
+          requiresConfirmation: true,
+          ...(inviteCode ? { inviteCode } : {}),
+        });
+      }
+
+      // ── Ohne Bestätigungspflicht: direkte Anmeldebestätigung ────────────────
       {
-        const raffle = await raffleService.raffles.get(raffleId);
-        const [globalRegSubject, globalRegBody, globalReplyTo] = await Promise.all([
+        const [globalRegSubject, globalRegBody] = await Promise.all([
           settings.get<string>("raffle.reg_email_subject"),
           settings.get<string>("raffle.reg_email_body"),
-          settings.get<string>("raffle.reply_to_email"),
         ]);
-
         const defaultSubject = "Deine Anmeldung für {{raffle_name}}";
         const defaultBody = "Hallo {{name}},\n\ndu hast dich erfolgreich für die Verlosung angemeldet. Du erhältst nach der Verlosung eine E-Mail mit deinem Ergebnis.\n\nViel Glück!";
-
-        const rawSubject = (raffle?.regEmailSubject ?? globalRegSubject ?? defaultSubject)
+        const rawSubject = (raffle.regEmailSubject ?? globalRegSubject ?? defaultSubject)
           .replace(/{{name}}/g, data.name)
-          .replace(/{{raffle_name}}/g, raffle?.name ?? "die Verlosung");
-
-        const rawBody = (raffle?.regEmailBody ?? globalRegBody ?? defaultBody)
+          .replace(/{{raffle_name}}/g, raffle.name);
+        const rawBody = (raffle.regEmailBody ?? globalRegBody ?? defaultBody)
           .replace(/{{name}}/g, data.name)
-          .replace(/{{raffle_name}}/g, raffle?.name ?? "die Verlosung");
-
+          .replace(/{{raffle_name}}/g, raffle.name);
         const groupSection = inviteCode
-          ? `<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-             <p style="font-weight:600">Dein Gruppeneinladungscode:</p>
-             <p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center;padding:12px 0">${inviteCode}</p>
-             <p style="color:#666;font-size:14px">Teile diesen Code mit den anderen Mitgliedern deiner Gruppe. Eine Gruppe hat keinen Einfluss auf deine Gewinnchance &mdash; sie sorgt nur daf&uuml;r, dass ihr als Gruppe das gleiche Ergebnis erhaltet.</p>`
+          ? `<p style="font-weight:600">Dein Gruppeneinladungscode:</p>` +
+            `<p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center;padding:12px 0">${esc(inviteCode)}</p>` +
+            `<p><span>Teile diesen Code mit den anderen Mitgliedern deiner Gruppe.</span></p>`
           : "";
-
-        const replyTo = raffle?.replyToEmail ?? globalReplyTo;
         await notifications
           .send({
             type: "email",
             recipient: data.email,
             subject: rawSubject,
-            rawHtml: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><p style="white-space:pre-wrap">${rawBody.replace(/</g, "&lt;")}</p>${groupSection}</div>`,
+            rawHtml: `<p style="white-space:pre-wrap">${esc(rawBody)}</p>${groupSection}`,
             ...(replyTo ? { replyTo } : {}),
           })
           .catch(() => {});

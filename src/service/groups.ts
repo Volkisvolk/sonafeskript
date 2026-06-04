@@ -176,6 +176,7 @@ export const listGroupsWithMembers = async (
     SELECT group_id, id, requested_tickets
     FROM raffle.registrations
     WHERE group_id IS NOT NULL AND status = 'pending' AND raffle_id = ${params.raffleId}::uuid
+      AND confirmed_at IS NOT NULL
     ORDER BY group_id, created_at
   `;
 

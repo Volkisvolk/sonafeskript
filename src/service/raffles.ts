@@ -59,6 +59,7 @@ const WITH_COUNT = sql`
   LEFT JOIN (
     SELECT raffle_id, COUNT(*)::int AS cnt, COALESCE(SUM(requested_tickets), 0)::int AS requested
     FROM raffle.registrations
+    WHERE confirmed_at IS NOT NULL
     GROUP BY raffle_id
   ) rc ON rc.raffle_id = r.id
 `;

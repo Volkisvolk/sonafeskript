@@ -26,6 +26,7 @@ type DbRegistration = {
   collected_at: Date | null;
   collected_tickets: number;
   collected_by: string | null;
+  confirmed_at: Date | null;
   created_at: Date;
 };
 
@@ -45,6 +46,7 @@ const mapRegistration = (row: DbRegistration): Registration => ({
   collectedAt: row.collected_at?.toISOString() ?? null,
   collectedTickets: row.collected_tickets ?? 0,
   collectedBy: row.collected_by,
+  confirmedAt: row.confirmed_at?.toISOString() ?? null,
   createdAt: row.created_at.toISOString(),
 });
 
@@ -56,7 +58,7 @@ const SELECT_COLS = sql`
   r.id, r.name, r.email, r.requested_tickets, r.accepted_agb,
   r.group_id, g.name AS group_name, g.invite_code AS group_invite_code,
   r.status, r.won_tickets, r.qr_token,
-  r.paid_at, r.collected_at, r.collected_tickets, r.collected_by, r.created_at
+  r.paid_at, r.collected_at, r.collected_tickets, r.collected_by, r.confirmed_at, r.created_at
 `;
 
 // ── Domain validation ────────────────────────────────────────────────────────
@@ -90,9 +92,12 @@ export const checkEmailAvailable = async (params: {
     return { ok: false, error: `Deine E-Mail-Domain ist nicht zugelassen. Erlaubte Domains: ${domains}`, status: 400 };
   }
 
+  // Nur BESTÄTIGTE Anmeldungen blockieren eine erneute Anmeldung. Unbestätigte
+  // dürfen erneut angemeldet werden (create() schickt dann den Link erneut).
   const [existing] = await sql<{ id: string }[]>`
     SELECT id FROM raffle.registrations
     WHERE LOWER(email) = LOWER(${params.email}) AND raffle_id = ${params.raffleId}::uuid
+      AND confirmed_at IS NOT NULL
   `;
   if (existing) {
     return { ok: false, error: "Diese E-Mail-Adresse ist für diese Verlosung bereits registriert.", status: 409 };
@@ -103,11 +108,24 @@ export const checkEmailAvailable = async (params: {
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
+// Sicheres Einmal-Token für den Bestätigungslink.
+const genConfirmToken = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+export type CreateResult = {
+  registration: Registration;
+  confirmToken: string | null;
+  requiresConfirmation: boolean;
+  resent: boolean;
+};
+
 export const create = async (params: {
   data: Register;
   groupId?: string;
   raffleId: string;
-}): Promise<MutationResult<Registration>> => {
+}): Promise<MutationResult<CreateResult>> => {
   const { data, groupId, raffleId } = params;
 
   const domainOk = await isEmailDomainAllowed(data.email);
@@ -125,16 +143,28 @@ export const create = async (params: {
     };
   }
 
-  const [existing] = await sql<{ id: string }[]>`
-    SELECT id FROM raffle.registrations
+  const requireConfirmation = (await settings.get<boolean>("raffle.require_email_confirmation")) ?? true;
+
+  const [existing] = await sql<{ id: string; confirmed_at: Date | null }[]>`
+    SELECT id, confirmed_at FROM raffle.registrations
     WHERE LOWER(email) = LOWER(${data.email}) AND raffle_id = ${raffleId}::uuid
   `;
   if (existing) {
-    return {
-      ok: false,
-      error: "Diese E-Mail-Adresse ist für diese Verlosung bereits registriert.",
-      status: 409,
-    };
+    // Bereits bestätigt → echte Doppelanmeldung, ablehnen.
+    if (existing.confirmed_at) {
+      return {
+        ok: false,
+        error: "Diese E-Mail-Adresse ist für diese Verlosung bereits registriert.",
+        status: 409,
+      };
+    }
+    // Noch unbestätigt → neuen Bestätigungslink erzeugen und erneut schicken,
+    // statt eine Sackgasse zu erzeugen.
+    const token = genConfirmToken();
+    await sql`UPDATE raffle.registrations SET confirm_token = ${token} WHERE id = ${existing.id}::uuid`;
+    const reg = await get({ id: existing.id });
+    if (!reg) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
+    return { ok: true, data: { registration: reg, confirmToken: token, requiresConfirmation: true, resent: true } };
   }
 
   // ── Mail-Abuse-Schutz: Cooldown pro Zieladresse ──────────────────────────
@@ -163,6 +193,11 @@ export const create = async (params: {
   }
 
   const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
+
+  // Bestätigungspflicht: Token + confirmed_at vorbereiten. Ohne Pflicht gilt
+  // die Anmeldung sofort als bestätigt.
+  const confirmToken = requireConfirmation ? genConfirmToken() : null;
+  const confirmedAt: Date | null = requireConfirmation ? null : new Date();
 
   // Status-Check, Gruppengröße-Check und INSERT in einer Transaction mit
   // Row-Locks. Die Raffle-Zeile wird mit FOR SHARE gesperrt: Damit kann
@@ -197,14 +232,14 @@ export const create = async (params: {
       }
       return tx<DbRegistration[]>`
         INSERT INTO raffle.registrations
-          (name, email, requested_tickets, accepted_agb, group_id, raffle_id)
+          (name, email, requested_tickets, accepted_agb, group_id, raffle_id, confirm_token, confirmed_at)
         VALUES
-          (${data.name}, ${data.email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid)
+          (${data.name}, ${data.email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid, ${confirmToken}, ${confirmedAt})
         RETURNING
           id, name, email, requested_tickets, accepted_agb,
           group_id, NULL AS group_name, NULL AS group_invite_code,
           status, won_tickets, qr_token,
-          paid_at, collected_at, collected_tickets, collected_by, created_at
+          paid_at, collected_at, collected_tickets, collected_by, confirmed_at, created_at
       `;
     });
     [row] = rows;
@@ -232,7 +267,33 @@ export const create = async (params: {
 
   const finalRow = await get({ id: row.id });
   if (!finalRow) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
-  return { ok: true, data: finalRow };
+  return {
+    ok: true,
+    data: { registration: finalRow, confirmToken, requiresConfirmation: requireConfirmation, resent: false },
+  };
+};
+
+// ── E-Mail-Bestätigung (Magic Link) ─────────────────────────────────────────────
+
+export type ConfirmOutcome = "confirmed" | "already" | "invalid";
+
+export const confirmRegistration = async (
+  token: string,
+): Promise<{ outcome: ConfirmOutcome; raffleId?: string; name?: string }> => {
+  if (!token || token.length < 16) return { outcome: "invalid" };
+
+  const [existing] = await sql<{ id: string; confirmed_at: Date | null; raffle_id: string; name: string }[]>`
+    SELECT id, confirmed_at, raffle_id, name FROM raffle.registrations WHERE confirm_token = ${token}
+  `;
+  if (!existing) return { outcome: "invalid" };
+  if (existing.confirmed_at) {
+    return { outcome: "already", raffleId: existing.raffle_id, name: existing.name };
+  }
+
+  await sql`
+    UPDATE raffle.registrations SET confirmed_at = now() WHERE id = ${existing.id}::uuid AND confirmed_at IS NULL
+  `;
+  return { outcome: "confirmed", raffleId: existing.raffle_id, name: existing.name };
 };
 
 // ── Read ──────────────────────────────────────────────────────────────────────
@@ -430,9 +491,9 @@ export const getStats = async (params: { raffleId: string }): Promise<{
     SELECT
       COUNT(*)::int AS total_registrations,
       COALESCE(SUM(requested_tickets), 0)::int AS total_requested_tickets,
-      COUNT(*) FILTER (WHERE collected_at IS NOT NULL)::int AS total_collected
+      COALESCE(SUM(collected_tickets), 0)::int AS total_collected
     FROM raffle.registrations
-    WHERE raffle_id = ${params.raffleId}::uuid
+    WHERE raffle_id = ${params.raffleId}::uuid AND confirmed_at IS NOT NULL
   `;
   return {
     totalRegistrations: row?.total_registrations ?? 0,
@@ -448,10 +509,14 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
   pending: number;
   paid: number;
   collected: number;
+  unconfirmed: number;
   totalRequestedTickets: number;
   totalWonTickets: number;
   totalCollectedTickets: number;
 }> => {
+  // Alle Kennzahlen beziehen sich auf BESTÄTIGTE Anmeldungen. Unbestätigte
+  // (Magic Link noch nicht geklickt) werden separat als `unconfirmed` gezählt
+  // und fließen nicht in Teilnehmer-/Kartenzahlen oder die Verlosung ein.
   const [row] = await sql<{
     total: number;
     won: number;
@@ -459,19 +524,21 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     pending: number;
     paid: number;
     collected: number;
+    unconfirmed: number;
     total_requested: number;
     total_won: number;
     total_collected_tickets: number;
   }[]>`
     SELECT
-      COUNT(*)::int AS total,
-      COUNT(*) FILTER (WHERE status = 'won')::int AS won,
-      COUNT(*) FILTER (WHERE status = 'lost')::int AS lost,
-      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+      COUNT(*) FILTER (WHERE confirmed_at IS NOT NULL)::int AS total,
+      COUNT(*) FILTER (WHERE status = 'won' AND confirmed_at IS NOT NULL)::int AS won,
+      COUNT(*) FILTER (WHERE status = 'lost' AND confirmed_at IS NOT NULL)::int AS lost,
+      COUNT(*) FILTER (WHERE status = 'pending' AND confirmed_at IS NOT NULL)::int AS pending,
       COUNT(*) FILTER (WHERE paid_at IS NOT NULL)::int AS paid,
       COUNT(*) FILTER (WHERE collected_at IS NOT NULL)::int AS collected,
-      COALESCE(SUM(requested_tickets), 0)::int AS total_requested,
-      COALESCE(SUM(won_tickets), 0)::int AS total_won,
+      COUNT(*) FILTER (WHERE confirmed_at IS NULL)::int AS unconfirmed,
+      COALESCE(SUM(requested_tickets) FILTER (WHERE confirmed_at IS NOT NULL), 0)::int AS total_requested,
+      COALESCE(SUM(won_tickets) FILTER (WHERE confirmed_at IS NOT NULL), 0)::int AS total_won,
       COALESCE(SUM(collected_tickets), 0)::int AS total_collected_tickets
     FROM raffle.registrations
     WHERE raffle_id = ${params.raffleId}::uuid
@@ -483,6 +550,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
     pending: row?.pending ?? 0,
     paid: row?.paid ?? 0,
     collected: row?.collected ?? 0,
+    unconfirmed: row?.unconfirmed ?? 0,
     totalRequestedTickets: row?.total_requested ?? 0,
     totalWonTickets: row?.total_won ?? 0,
     totalCollectedTickets: row?.total_collected_tickets ?? 0,
@@ -560,5 +628,6 @@ export const listAllRaw = async (
     SELECT id, requested_tickets, group_id
     FROM raffle.registrations
     WHERE status = 'pending' AND raffle_id = ${params.raffleId}::uuid
+      AND confirmed_at IS NOT NULL
   `;
 };

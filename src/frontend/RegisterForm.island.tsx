@@ -17,7 +17,7 @@ export default function RegisterForm(props: Props) {
   const [groupName, setGroupName] = createSignal("");
   const [joinCode, setJoinCode] = createSignal("");
   const [loading, setLoading] = createSignal(false);
-  const [done, setDone] = createSignal<{ inviteCode?: string } | null>(null);
+  const [done, setDone] = createSignal<{ inviteCode?: string; requiresConfirmation?: boolean } | null>(null);
   const [error, setError] = createSignal("");
 
   // Vorschau der Gruppe beim Eintippen des Codes
@@ -69,7 +69,7 @@ export default function RegisterForm(props: Props) {
         return;
       }
 
-      setDone({ inviteCode: body.inviteCode });
+      setDone({ inviteCode: body.inviteCode, requiresConfirmation: body.requiresConfirmation });
     } catch {
       setError("Verbindungsfehler. Bitte überprüfe deine Internetverbindung.");
     } finally {
@@ -83,15 +83,31 @@ export default function RegisterForm(props: Props) {
         when={!done()}
         fallback={
           <div class="flex flex-col items-center text-center gap-3 py-4">
-            <div class="w-14 h-14 thumbnail bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-              <i class="ti ti-circle-check text-3xl text-emerald-600 dark:text-emerald-400" />
+            <div class={`w-14 h-14 thumbnail flex items-center justify-center ${done()?.requiresConfirmation ? "bg-amber-100 dark:bg-amber-900/40" : "bg-emerald-100 dark:bg-emerald-900/40"}`}>
+              <i class={`ti text-3xl ${done()?.requiresConfirmation ? "ti-mail-forward text-amber-600 dark:text-amber-400" : "ti-circle-check text-emerald-600 dark:text-emerald-400"}`} />
             </div>
-            <div>
-              <h2 class="text-lg font-semibold text-primary">Erfolgreich angemeldet!</h2>
-              <p class="text-sm text-dimmed mt-1">
-                Du erhältst nach der Verlosung eine E-Mail an <strong>{email()}</strong>.
-              </p>
-            </div>
+            <Show
+              when={done()?.requiresConfirmation}
+              fallback={
+                <div>
+                  <h2 class="text-lg font-semibold text-primary">Erfolgreich angemeldet!</h2>
+                  <p class="text-sm text-dimmed mt-1">
+                    Du erhältst nach der Verlosung eine E-Mail an <strong>{email()}</strong>.
+                  </p>
+                </div>
+              }
+            >
+              <div>
+                <h2 class="text-lg font-semibold text-primary">Fast geschafft – bitte bestätigen!</h2>
+                <p class="text-sm text-dimmed mt-1">
+                  Wir haben dir einen Bestätigungslink an <strong>{email()}</strong> geschickt.
+                  Erst nach dem Klick auf den Link zählt deine Anmeldung für die Verlosung.
+                </p>
+                <p class="text-xs text-dimmed mt-2">
+                  Keine Mail erhalten? Schau im Spam-Ordner nach oder melde dich erneut an.
+                </p>
+              </div>
+            </Show>
             <Show when={done()?.inviteCode}>
               <div class="info-block-info p-3 text-left w-full">
                 <p class="text-sm font-semibold mb-1">

@@ -216,6 +216,33 @@ export const migrate = async (): Promise<void> => {
   `.simple();
   console.log("  ✓ raffle.registrations result_email_sent_at column");
 
+  // ── E-Mail-Bestätigung (Double-Opt-In / Magic Link) ──────────────────────
+  // confirmed_at IS NOT NULL = Anmeldung per Link bestätigt und zählt wirklich.
+  // confirm_token = Einmal-Token für den Bestätigungslink.
+  await sql`
+    ALTER TABLE raffle.registrations
+    ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ
+  `.simple();
+  await sql`
+    ALTER TABLE raffle.registrations
+    ADD COLUMN IF NOT EXISTS confirm_token TEXT
+  `.simple();
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_registrations_confirm_token
+    ON raffle.registrations(confirm_token)
+    WHERE confirm_token IS NOT NULL
+  `.simple();
+  // Backfill (einmalig, idempotent): Anmeldungen, die VOR diesem Feature
+  // angelegt wurden, haben keinen confirm_token und gelten als bestätigt.
+  // Neue, noch unbestätigte Anmeldungen haben immer einen Token und werden
+  // hier bewusst NICHT angefasst (sonst würde ein Neustart sie bestätigen).
+  await sql`
+    UPDATE raffle.registrations
+    SET confirmed_at = created_at
+    WHERE confirmed_at IS NULL AND confirm_token IS NULL
+  `.simple();
+  console.log("  ✓ raffle.registrations confirmation columns");
+
   // ── Teil-Abholung: Anzahl bereits abgeholter Karten (0..won_tickets) ─────
   await sql`
     ALTER TABLE raffle.registrations

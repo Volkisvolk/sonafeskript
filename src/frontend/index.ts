@@ -5,9 +5,11 @@ import raffleDetailPage from "./[id]/page";
 import userListPage from "./user";
 import userDetailPage from "./user/[id]/page";
 import scannerPage from "./user/[id]/scanner";
+import confirmPage from "./confirm/[token]/page";
 
 export default new Hono<AuthContext>()
   .get("/", auth.requireRole("*"), ...raffleListPage)
+  .get("/confirm/:token", auth.requireRole("*"), ...confirmPage)
   .get("/my", auth.requireRole("authenticated", auth.redirectToLogin), ...userListPage)
   .get("/my/:id/scanner", auth.requireRole("authenticated", auth.redirectToLogin), ...scannerPage)
   .get("/my/:id", auth.requireRole("authenticated", auth.redirectToLogin), ...userDetailPage)

@@ -37,6 +37,13 @@ export const app = defineApp({
       description:
         'Kommagetrennte Liste erlaubter Domains (z.B. "uni.de,firma.com"). Leer lassen = alle Domains erlaubt.',
     },
+    "raffle.require_email_confirmation": {
+      kind: "boolean",
+      label: "E-Mail-Bestätigung erforderlich (Double-Opt-In)",
+      default: true,
+      description:
+        "Wenn aktiv, zählt eine Anmeldung erst, nachdem der Bestätigungslink (Magic Link) aus der E-Mail angeklickt wurde. Verhindert Anmeldungen mit fremden/erfundenen Adressen.",
+    },
     "raffle.reply_to_email": {
       kind: "string",
       label: "Reply-To E-Mail-Adresse",
