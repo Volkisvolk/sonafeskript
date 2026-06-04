@@ -216,6 +216,20 @@ export const migrate = async (): Promise<void> => {
   `.simple();
   console.log("  ✓ raffle.registrations result_email_sent_at column");
 
+  // ── Teil-Abholung: Anzahl bereits abgeholter Karten (0..won_tickets) ─────
+  await sql`
+    ALTER TABLE raffle.registrations
+    ADD COLUMN IF NOT EXISTS collected_tickets INT NOT NULL DEFAULT 0
+  `.simple();
+  // Backfill: bereits vollständig abgeholte Anmeldungen bekommen die volle
+  // gewonnene Kartenzahl als abgeholt eingetragen.
+  await sql`
+    UPDATE raffle.registrations
+    SET collected_tickets = COALESCE(won_tickets, 0)
+    WHERE collected_at IS NOT NULL AND collected_tickets = 0
+  `.simple();
+  console.log("  ✓ raffle.registrations collected_tickets column");
+
   // ── raffle_id auf registrations ──────────────────────────────────────────
   await sql`
     ALTER TABLE raffle.registrations

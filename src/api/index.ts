@@ -26,6 +26,8 @@ import {
   RegisterResponseSchema,
   GrantAccessSchema,
   UpdateAccessSchema,
+  SetCollectedSchema,
+  MarkPaidSchema,
 } from "@/contracts";
 
 import widgetRoutes from "./widgets";
@@ -662,6 +664,7 @@ const app = new Hono<AuthContext>()
       summary: "Als bezahlt markieren",
       responses: { 200: jsonResponse(MessageResponseSchema, "Als bezahlt markiert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
     }),
+    v("json", MarkPaidSchema),
     async (c) => {
       const user = c.get("user")!;
       const raffleId = c.req.param("raffleId")!;
@@ -669,7 +672,8 @@ const app = new Hono<AuthContext>()
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const regId = c.req.param("regId")!;
       if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
-      const result = await raffleService.tickets.markPaid({ registrationId: regId, performedBy: user?.mail ?? undefined });
+      const { collectedTickets } = c.req.valid("json");
+      const result = await raffleService.tickets.markPaid({ registrationId: regId, collectedTickets, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Als bezahlt markiert." });
     },
@@ -732,6 +736,28 @@ const app = new Hono<AuthContext>()
       const result = await raffleService.tickets.revertCollected({ registrationId: regId, performedBy: user?.mail ?? undefined });
       if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
       return c.json({ message: "Abholung wurde zurückgesetzt." });
+    },
+  )
+
+  .patch(
+    "/user/raffles/:raffleId/registrations/:regId/collected",
+    describeRoute({
+      tags: ["User"],
+      summary: "Abgeholte Kartenzahl setzen (Teil-Abholung)",
+      responses: { 200: jsonResponse(MessageResponseSchema, "Abholung aktualisiert"), 403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung") },
+    }),
+    v("json", SetCollectedSchema),
+    async (c) => {
+      const user = c.get("user")!;
+      const raffleId = c.req.param("raffleId")!;
+      const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
+      if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
+      const regId = c.req.param("regId")!;
+      if (!await raffleService.registrations.get({ id: regId, raffleId })) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const { tickets } = c.req.valid("json");
+      const result = await raffleService.tickets.setCollected({ registrationId: regId, tickets, performedBy: user?.mail ?? undefined });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: `Abholung aktualisiert: ${tickets} Karte(n).` });
     },
   )
 

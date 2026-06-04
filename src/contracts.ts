@@ -26,7 +26,8 @@ export const RegistrationSchema = z.object({
   wonTickets: z.number().int().nullable().describe("Tatsächlich gewonnene Karten"),
   qrToken: z.string().nullable().describe("Eindeutiger QR-Code-Token"),
   paidAt: z.string().nullable().describe("Zeitpunkt der Bezahlung (ISO)"),
-  collectedAt: z.string().nullable().describe("Zeitpunkt der Abholung (ISO)"),
+  collectedAt: z.string().nullable().describe("Zeitpunkt der vollständigen Abholung (ISO)"),
+  collectedTickets: z.number().int().describe("Anzahl bereits abgeholter Karten"),
   collectedBy: z.string().nullable().describe("Abgeholt von (E-Mail bei Vollmacht)"),
   createdAt: z.string().describe("Anmeldezeitpunkt (ISO)"),
 });
@@ -246,6 +247,16 @@ export const AdjustTicketsSchema = z.object({
   wonTickets: z.number().int().min(1, "Mindestens 1 Karte").max(10),
 });
 export type AdjustTickets = z.infer<typeof AdjustTicketsSchema>;
+
+export const SetCollectedSchema = z.object({
+  tickets: z.number().int().min(0, "Mindestens 0").max(10),
+});
+export type SetCollected = z.infer<typeof SetCollectedSchema>;
+
+export const MarkPaidSchema = z.object({
+  collectedTickets: z.number().int().min(0).max(10).optional(),
+});
+export type MarkPaid = z.infer<typeof MarkPaidSchema>;
 
 export const ProxyCollectSchema = z.object({
   collectedByEmail: z

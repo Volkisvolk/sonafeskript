@@ -298,14 +298,17 @@ export default ssr<AuthContext>(async (c) => {
                               {STATUS_LABEL[r.status]}
                             </td>
                             <td class="px-3 py-2">
-                              {r.status === "won" ? (
-                                <UserRegistrationActions
-                                  raffleId={raffleId}
-                                  registrationId={r.id}
-                                  paidAt={r.paidAt}
-                                  collectedAt={r.collectedAt}
-                                />
-                              ) : null}
+                              <UserRegistrationActions
+                                raffleId={raffleId}
+                                registrationId={r.id}
+                                name={r.name}
+                                status={r.status}
+                                paidAt={r.paidAt}
+                                collectedAt={r.collectedAt}
+                                wonTickets={r.wonTickets}
+                                collectedTickets={r.collectedTickets}
+                                requestedTickets={r.requestedTickets}
+                              />
                             </td>
                           </tr>
                         ))}

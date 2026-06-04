@@ -53,17 +53,30 @@ export const getEvents = async (params: { registrationId: string }): Promise<Tic
 
 export const markPaid = async (params: {
   registrationId: string;
+  collectedTickets?: number;
   performedBy?: string;
 }): Promise<MutationResult<void>> => {
-  const [row] = await sql<{ paid_at: Date | null; status: string }[]>`
-    SELECT paid_at, status FROM raffle.registrations WHERE id = ${params.registrationId}::uuid
+  const [row] = await sql<{ paid_at: Date | null; status: string; won_tickets: number | null }[]>`
+    SELECT paid_at, status, won_tickets FROM raffle.registrations WHERE id = ${params.registrationId}::uuid
   `;
   if (!row) return { ok: false, error: "Anmeldung nicht gefunden.", status: 404 };
   if (row.status !== "won") return { ok: false, error: "Nur Gewinner können Karten bezahlen.", status: 400 };
   if (row.paid_at) return { ok: false, error: "Karten sind bereits als bezahlt markiert.", status: 400 };
 
+  const won = row.won_tickets ?? 0;
+  // Standardmäßig gelten alle gewonnenen Karten als abgeholt; optional kann
+  // beim Bezahlen eine geringere abgeholte Anzahl angegeben werden.
+  const collected = params.collectedTickets ?? won;
+  if (collected < 0 || collected > won) {
+    return { ok: false, error: `Die abgeholte Kartenzahl muss zwischen 0 und ${won} liegen.`, status: 400 };
+  }
+  const fullyCollected = collected >= won && won > 0;
+
   await sql`
-    UPDATE raffle.registrations SET paid_at = now(), collected_at = now()
+    UPDATE raffle.registrations
+    SET paid_at = now(),
+        collected_tickets = ${collected},
+        collected_at = ${fullyCollected ? sql`now()` : sql`NULL`}
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
@@ -74,6 +87,7 @@ export const markPaid = async (params: {
   await logEvent({
     registrationId: params.registrationId,
     eventType: "collected",
+    details: `Abgeholt: ${collected}/${won}`,
     performedBy: params.performedBy,
   });
   return { ok: true, data: undefined };
@@ -90,7 +104,7 @@ export const revertPaid = async (params: {
   if (!row.paid_at) return { ok: false, error: "Karten sind nicht als bezahlt markiert.", status: 400 };
 
   await sql`
-    UPDATE raffle.registrations SET paid_at = NULL, collected_at = NULL
+    UPDATE raffle.registrations SET paid_at = NULL, collected_at = NULL, collected_tickets = 0
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
@@ -121,7 +135,7 @@ export const markCollected = async (params: {
 
   await sql`
     UPDATE raffle.registrations
-    SET collected_at = now(), collected_by = NULL
+    SET collected_at = now(), collected_by = NULL, collected_tickets = COALESCE(won_tickets, 0)
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
@@ -144,7 +158,7 @@ export const revertCollected = async (params: {
 
   await sql`
     UPDATE raffle.registrations
-    SET collected_at = NULL, collected_by = NULL
+    SET collected_at = NULL, collected_by = NULL, collected_tickets = 0
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
@@ -171,13 +185,49 @@ export const markCollectedByProxy = async (params: {
 
   await sql`
     UPDATE raffle.registrations
-    SET collected_at = now(), collected_by = ${params.collectedByEmail}
+    SET collected_at = now(), collected_by = ${params.collectedByEmail}, collected_tickets = COALESCE(won_tickets, 0)
     WHERE id = ${params.registrationId}::uuid
   `;
   await logEvent({
     registrationId: params.registrationId,
     eventType: "collected_by_proxy",
     details: `Abgeholt von: ${params.collectedByEmail}`,
+    performedBy: params.performedBy,
+  });
+  return { ok: true, data: undefined };
+};
+
+// ── Teil-Abholung: abgeholte Kartenzahl setzen ──────────────────────────────────
+
+export const setCollected = async (params: {
+  registrationId: string;
+  tickets: number;
+  performedBy?: string;
+}): Promise<MutationResult<void>> => {
+  const [row] = await sql<{ status: string; won_tickets: number | null }[]>`
+    SELECT status, won_tickets FROM raffle.registrations WHERE id = ${params.registrationId}::uuid
+  `;
+  if (!row) return { ok: false, error: "Anmeldung nicht gefunden.", status: 404 };
+  if (row.status !== "won") return { ok: false, error: "Nur Gewinner können Karten abholen.", status: 400 };
+
+  const won = row.won_tickets ?? 0;
+  if (params.tickets < 0 || params.tickets > won) {
+    return { ok: false, error: `Die abgeholte Kartenzahl muss zwischen 0 und ${won} liegen.`, status: 400 };
+  }
+
+  // collected_at markiert die vollständige Abholung. Bei Teil-Abholung bleibt
+  // es NULL, damit Statistik und Scanner "noch offen" korrekt anzeigen.
+  const fullyCollected = params.tickets >= won && won > 0;
+  await sql`
+    UPDATE raffle.registrations
+    SET collected_tickets = ${params.tickets},
+        collected_at = ${fullyCollected ? sql`now()` : sql`NULL`}
+    WHERE id = ${params.registrationId}::uuid
+  `;
+  await logEvent({
+    registrationId: params.registrationId,
+    eventType: params.tickets === 0 ? "collected_reverted" : "collected",
+    details: `Abgeholt: ${params.tickets}/${won}`,
     performedBy: params.performedBy,
   });
   return { ok: true, data: undefined };
@@ -213,9 +263,8 @@ export const adjustTickets = async (params: {
 
 export const getTotalCollectedCount = async (): Promise<number> => {
   const [row] = await sql<{ count: number }[]>`
-    SELECT COALESCE(SUM(won_tickets), 0)::int AS count
+    SELECT COALESCE(SUM(collected_tickets), 0)::int AS count
     FROM raffle.registrations
-    WHERE collected_at IS NOT NULL
   `;
   return row?.count ?? 0;
 };

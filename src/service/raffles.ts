@@ -87,22 +87,10 @@ export const update = async (id: string, data: UpdateRaffle): Promise<MutationRe
 
   const name = data.name ?? existing.name;
   const description = data.description !== undefined ? data.description : existing.description;
+  // Das Kontingent ist die Anzahl tatsächlich verfügbarer Karten und darf
+  // bewusst unter der Summe der angeforderten Karten liegen – genau dafür
+  // gibt es die Verlosung. Keine künstliche Untergrenze.
   const ticketContingent = data.ticketContingent ?? existing.ticketContingent;
-
-  if (data.ticketContingent !== undefined) {
-    const [{ total }] = await sql<{ total: number }[]>`
-      SELECT COALESCE(SUM(requested_tickets), 0)::int AS total
-      FROM raffle.registrations
-      WHERE raffle_id = ${id}::uuid
-    `;
-    if (ticketContingent < total) {
-      return {
-        ok: false,
-        error: `Das Kontingent kann nicht unter ${total} gesenkt werden – so viele Karten wurden bereits angefordert.`,
-        status: 400,
-      };
-    }
-  }
 
   const allowedEmailPatterns = data.allowedEmailPatterns !== undefined ? data.allowedEmailPatterns : existing.allowedEmailPatterns;
   const replyToEmail = data.replyToEmail !== undefined ? data.replyToEmail : existing.replyToEmail;

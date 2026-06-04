@@ -21,6 +21,7 @@ export default function UserQrScanner(props: Props) {
   const [result, setResult] = createSignal<Registration | null>(null);
   const [errorMsg, setErrorMsg] = createSignal("");
   const [markingPaid, setMarkingPaid] = createSignal(false);
+  const [collecting, setCollecting] = createSignal(false);
 
   const stopStream = () => {
     active = false;
@@ -92,22 +93,62 @@ export default function UserQrScanner(props: Props) {
   const markPaid = async () => {
     const reg = result();
     if (!reg) return;
+    const won = reg.wonTickets ?? reg.requestedTickets;
+    let collectedTickets: number | undefined;
+    if (won > 1) {
+      const n = await prompts.promptNumber(
+        `Wie viele der ${won} Karten wurden abgeholt?`,
+        won,
+        { title: "Als bezahlt markieren", confirmText: "Bezahlt", min: 0, max: won },
+      );
+      if (n === null) return; // abgebrochen
+      collectedTickets = n;
+    }
     setMarkingPaid(true);
     try {
       const res = await fetch(
         `/api/raffle/user/raffles/${props.raffleId}/registrations/${reg.id}/mark-paid`,
-        { method: "POST" },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ collectedTickets }) },
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         await prompts.error(body.message ?? "Fehler beim Markieren.");
         return;
       }
-      setResult({ ...reg, paidAt: new Date().toISOString() });
+      const finalCollected = collectedTickets ?? won;
+      setResult({
+        ...reg,
+        paidAt: new Date().toISOString(),
+        collectedTickets: finalCollected,
+        collectedAt: finalCollected >= won ? new Date().toISOString() : null,
+      });
     } catch {
       await prompts.error("Verbindungsfehler.");
     } finally {
       setMarkingPaid(false);
+    }
+  };
+
+  const setCollectedCount = async (tickets: number) => {
+    const reg = result();
+    if (!reg) return;
+    setCollecting(true);
+    try {
+      const res = await fetch(
+        `/api/raffle/user/raffles/${props.raffleId}/registrations/${reg.id}/collected`,
+        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickets }) },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        await prompts.error(body.message ?? "Fehler beim Markieren.");
+        return;
+      }
+      const won = reg.wonTickets ?? reg.requestedTickets;
+      setResult({ ...reg, collectedTickets: tickets, collectedAt: tickets >= won ? new Date().toISOString() : null });
+    } catch {
+      await prompts.error("Verbindungsfehler.");
+    } finally {
+      setCollecting(false);
     }
   };
 
@@ -183,6 +224,8 @@ export default function UserQrScanner(props: Props) {
         <Show when={phase() === "result" ? result() : null} keyed>
           {(reg) => {
             const paid = !!reg.paidAt;
+            const won = reg.wonTickets ?? reg.requestedTickets;
+            const collected = reg.collectedTickets ?? 0;
             return (
               <div class="w-full max-w-sm flex flex-col gap-3">
                 <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
@@ -216,6 +259,32 @@ export default function UserQrScanner(props: Props) {
                   </div>
 
                   <Show when={!paid}>
+                    {/* Abhol-Fortschritt + Teil-Abholung */}
+                    <div class="mb-3">
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-zinc-400 text-sm">Abgeholt</span>
+                        <span class="font-semibold tabular-nums">{collected} / {won}</span>
+                      </div>
+                      <Show when={won > 1}>
+                        <div class="flex items-center gap-2">
+                          <button
+                            class="btn-secondary btn-sm flex-1 justify-center"
+                            disabled={collecting() || collected <= 0}
+                            onClick={() => setCollectedCount(collected - 1)}
+                          >
+                            <i class="ti ti-minus" />
+                          </button>
+                          <button
+                            class="btn-secondary btn-sm flex-1 justify-center"
+                            disabled={collecting() || collected >= won}
+                            onClick={() => setCollectedCount(collected + 1)}
+                          >
+                            <i class="ti ti-plus mr-1" /> 1 Karte abgeholt
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
+
                     <button
                       class="btn-primary w-full"
                       disabled={markingPaid()}
@@ -224,14 +293,14 @@ export default function UserQrScanner(props: Props) {
                       {markingPaid()
                         ? <i class="ti ti-loader-2 animate-spin mr-2" />
                         : <i class="ti ti-coin mr-2" />}
-                      Als bezahlt markieren
+                      Bezahlt &amp; vollständig abgeholt
                     </button>
                   </Show>
 
                   <Show when={paid}>
                     <div class="flex items-center justify-center gap-2 text-emerald-400 py-2">
                       <i class="ti ti-circle-check text-xl" />
-                      <span class="font-medium">Bezahlung bestätigt</span>
+                      <span class="font-medium">Bezahlt &amp; abgeholt</span>
                     </div>
                   </Show>
                 </div>

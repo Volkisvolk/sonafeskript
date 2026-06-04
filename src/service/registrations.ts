@@ -24,6 +24,7 @@ type DbRegistration = {
   qr_token: string | null;
   paid_at: Date | null;
   collected_at: Date | null;
+  collected_tickets: number;
   collected_by: string | null;
   created_at: Date;
 };
@@ -42,6 +43,7 @@ const mapRegistration = (row: DbRegistration): Registration => ({
   qrToken: row.qr_token,
   paidAt: row.paid_at?.toISOString() ?? null,
   collectedAt: row.collected_at?.toISOString() ?? null,
+  collectedTickets: row.collected_tickets ?? 0,
   collectedBy: row.collected_by,
   createdAt: row.created_at.toISOString(),
 });
@@ -54,7 +56,7 @@ const SELECT_COLS = sql`
   r.id, r.name, r.email, r.requested_tickets, r.accepted_agb,
   r.group_id, g.name AS group_name, g.invite_code AS group_invite_code,
   r.status, r.won_tickets, r.qr_token,
-  r.paid_at, r.collected_at, r.collected_by, r.created_at
+  r.paid_at, r.collected_at, r.collected_tickets, r.collected_by, r.created_at
 `;
 
 // ── Domain validation ────────────────────────────────────────────────────────
@@ -202,7 +204,7 @@ export const create = async (params: {
           id, name, email, requested_tickets, accepted_agb,
           group_id, NULL AS group_name, NULL AS group_invite_code,
           status, won_tickets, qr_token,
-          paid_at, collected_at, collected_by, created_at
+          paid_at, collected_at, collected_tickets, collected_by, created_at
       `;
     });
     [row] = rows;
@@ -470,7 +472,7 @@ export const getAdminSummary = async (params: { raffleId: string }): Promise<{
       COUNT(*) FILTER (WHERE collected_at IS NOT NULL)::int AS collected,
       COALESCE(SUM(requested_tickets), 0)::int AS total_requested,
       COALESCE(SUM(won_tickets), 0)::int AS total_won,
-      COALESCE(SUM(won_tickets) FILTER (WHERE collected_at IS NOT NULL), 0)::int AS total_collected_tickets
+      COALESCE(SUM(collected_tickets), 0)::int AS total_collected_tickets
     FROM raffle.registrations
     WHERE raffle_id = ${params.raffleId}::uuid
   `;

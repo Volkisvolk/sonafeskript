@@ -301,10 +301,6 @@ export default function UserRaffleSettings(props: Props) {
     if (!raffleName().trim()) { await prompts.error("Name darf nicht leer sein."); return; }
     const cont = parseInt(contingent(), 10);
     if (isNaN(cont) || cont < 1) { await prompts.error("Das Kontingent muss eine positive Zahl sein."); return; }
-    if (cont < props.totalRequestedTickets) {
-      await prompts.error(`Das Kontingent kann nicht unter ${props.totalRequestedTickets} gesenkt werden – so viele Karten wurden bereits angefordert.`);
-      return;
-    }
 
     setLoading(true);
     try {
@@ -428,18 +424,18 @@ export default function UserRaffleSettings(props: Props) {
                 <div>
                   <label class="block text-xs font-medium text-dimmed mb-1">
                     Kartenkontingent <span class="text-red-500">*</span>
-                    <Tip text="Maximale Anzahl der Tickets. Kann nicht unter die Summe bereits angeforderter Karten gesenkt werden." />
+                    <Tip text="Anzahl tatsächlich verfügbarer Karten, die verlost werden. Darf bewusst unter der Summe der angeforderten Karten liegen – genau dann wird verlost." />
                   </label>
                   <input
                     type="number"
                     class="btn-input w-full"
-                    min={props.totalRequestedTickets}
+                    min={1}
                     value={contingent()}
                     onInput={(e) => setContingent(e.currentTarget.value)}
                     required
                   />
                   <p class="text-xs text-dimmed mt-1">
-                    Minimum: {props.totalRequestedTickets} (bereits angefordert)
+                    Bereits angefordert: {props.totalRequestedTickets} Karten
                   </p>
                 </div>
               </div>
