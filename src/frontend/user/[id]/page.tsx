@@ -50,7 +50,7 @@ export default ssr<AuthContext>(async (c) => {
   const search = (c.req.query("search") ?? "").trim();
   const filter = c.req.query("filter") as "won" | "lost" | "pending" | undefined;
 
-  const [summary, registrations, accessEntries, userPermission, defaultAgbText, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
+  const [summary, registrations, accessEntries, userPermission, defaultReplyTo, defaultRegSubject, defaultRegBody, defaultWinSubject, defaultWinBody, defaultLossSubject, defaultLossBody] = await Promise.all([
     raffleService.registrations.getAdminSummary({ raffleId }),
     raffleService.registrations.listAdmin({
       raffleId,
@@ -60,7 +60,6 @@ export default ssr<AuthContext>(async (c) => {
     }),
     raffleService.access.list(raffleId),
     raffleService.access.getUserPermission(raffleId, user.id, user.memberofGroupIds),
-    settings.get<string>("raffle.agb_text"),
     settings.get<string>("raffle.reply_to_email"),
     settings.get<string>("raffle.reg_email_subject"),
     settings.get<string>("raffle.reg_email_body"),
@@ -188,11 +187,9 @@ export default ssr<AuthContext>(async (c) => {
             bannerUrl={raffle.bannerUrl}
             bannerPosition={raffle.bannerPosition}
             faqItems={raffle.faqItems}
-            agbText={raffle.agbText}
             regEmailSubject={raffle.regEmailSubject}
             regEmailBody={raffle.regEmailBody}
             defaults={{
-              agbText: defaultAgbText ?? "",
               replyToEmail: defaultReplyTo ?? "",
               regEmailSubject: defaultRegSubject ?? "",
               regEmailBody: defaultRegBody ?? "",

@@ -15,7 +15,7 @@ export const app = defineApp({
   },
   widgets: [{ id: "stats", path: "/api/raffle/widget/stats" }],
   openapi: "/api/raffle/openapi.json",
-  routes: ["/api/raffle", "/app/raffle", "/public/raffle"],
+  routes: ["/api/raffle", "/app/raffle"],
   settings: {
     "raffle.ticket_contingent": {
       kind: "number",
@@ -54,7 +54,7 @@ export const app = defineApp({
       kind: "string",
       label: "Gewinn-Mail: Text",
       default:
-        "Hallo {{name}},\n\nherzlichen Glückwunsch! Du hast bei unserer Verlosung {{won_tickets}} Karte(n) gewonnen.\n\nDein persönlicher QR-Code für die Abholung befindet sich im Anhang dieser Mail. Bitte zeige ihn beim Abholen vor.\n\nBei Fragen antworte einfach auf diese Mail.\n\nViele Grüße",
+        "Hallo {{name}},\n\nherzlichen Glückwunsch! Du hast bei unserer Verlosung {{won_tickets}} Karte(n) gewonnen.\n\nDein persönliches Ticket mit QR-Code kannst du über den Link in dieser Mail aufrufen. Bitte zeige den QR-Code beim Abholen vor.\n\nBei Fragen antworte einfach auf diese Mail.\n\nViele Grüße",
       description:
         "Text der Gewinn-Mail. Platzhalter: {{name}} (Name), {{won_tickets}} (Anzahl gewonnener Karten).",
     },

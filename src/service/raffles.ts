@@ -21,7 +21,6 @@ type DbRaffle = {
   banner_url: string | null;
   banner_position: string;
   faq_items: string;
-  agb_text: string | null;
   reg_email_subject: string | null;
   reg_email_body: string | null;
 };
@@ -45,7 +44,6 @@ const mapRaffle = (r: DbRaffle): RaffleItem => ({
   bannerUrl: r.banner_url,
   bannerPosition: r.banner_position ?? "50% 50%",
   faqItems: (() => { try { return JSON.parse(r.faq_items || "[]"); } catch { return []; } })(),
-  agbText: r.agb_text,
   regEmailSubject: r.reg_email_subject,
   regEmailBody: r.reg_email_body,
 });
@@ -102,7 +100,6 @@ export const update = async (id: string, data: UpdateRaffle): Promise<MutationRe
   const bannerUrl = data.bannerUrl !== undefined ? data.bannerUrl : existing.bannerUrl;
   const bannerPosition = data.bannerPosition ?? existing.bannerPosition;
   const faqItems = data.faqItems !== undefined ? JSON.stringify(data.faqItems) : JSON.stringify(existing.faqItems);
-  const agbText = data.agbText !== undefined ? data.agbText : existing.agbText;
   const regEmailSubject = data.regEmailSubject !== undefined ? data.regEmailSubject : existing.regEmailSubject;
   const regEmailBody = data.regEmailBody !== undefined ? data.regEmailBody : existing.regEmailBody;
 
@@ -114,7 +111,7 @@ export const update = async (id: string, data: UpdateRaffle): Promise<MutationRe
         win_email_body = ${winEmailBody}, loss_email_subject = ${lossEmailSubject},
         loss_email_body = ${lossEmailBody}, banner_url = ${bannerUrl},
         banner_position = ${bannerPosition}, faq_items = ${faqItems},
-        agb_text = ${agbText}, reg_email_subject = ${regEmailSubject},
+        reg_email_subject = ${regEmailSubject},
         reg_email_body = ${regEmailBody}, updated_at = now()
     WHERE id = ${id}::uuid
   `;

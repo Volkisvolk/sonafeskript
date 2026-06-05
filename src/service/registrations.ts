@@ -15,7 +15,6 @@ type DbRegistration = {
   name: string;
   email: string;
   requested_tickets: number;
-  accepted_agb: boolean;
   group_id: string | null;
   group_name: string | null;
   group_invite_code: string | null;
@@ -35,7 +34,6 @@ const mapRegistration = (row: DbRegistration): Registration => ({
   name: row.name,
   email: row.email,
   requestedTickets: row.requested_tickets,
-  acceptedAgb: row.accepted_agb,
   groupId: row.group_id,
   groupName: row.group_name,
   groupInviteCode: row.group_invite_code,
@@ -55,7 +53,7 @@ const WITH_GROUP_SQL = sql`
 `;
 
 const SELECT_COLS = sql`
-  r.id, r.name, r.email, r.requested_tickets, r.accepted_agb,
+  r.id, r.name, r.email, r.requested_tickets,
   r.group_id, g.name AS group_name, g.invite_code AS group_invite_code,
   r.status, r.won_tickets, r.qr_token,
   r.paid_at, r.collected_at, r.collected_tickets, r.collected_by, r.confirmed_at, r.created_at
@@ -172,11 +170,11 @@ export const create = async (params: {
       }
       return tx<DbRegistration[]>`
         INSERT INTO raffle.registrations
-          (name, email, requested_tickets, accepted_agb, group_id, raffle_id, confirmed_at)
+          (name, email, requested_tickets, group_id, raffle_id, confirmed_at)
         VALUES
-          (${data.name}, ${email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid, now())
+          (${data.name}, ${email}, ${data.requestedTickets}, ${groupId ?? null}, ${raffleId}::uuid, now())
         RETURNING
-          id, name, email, requested_tickets, accepted_agb,
+          id, name, email, requested_tickets,
           group_id, NULL AS group_name, NULL AS group_invite_code,
           status, won_tickets, qr_token,
           paid_at, collected_at, collected_tickets, collected_by, confirmed_at, created_at

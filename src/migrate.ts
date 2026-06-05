@@ -58,7 +58,6 @@ export const migrate = async (): Promise<void> => {
       name              TEXT NOT NULL,
       email             TEXT NOT NULL UNIQUE,
       requested_tickets INT  NOT NULL CHECK (requested_tickets IN (1, 2)),
-      accepted_agb      BOOLEAN NOT NULL DEFAULT false,
       group_id          UUID REFERENCES raffle.groups(id) ON DELETE SET NULL,
       status            TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'won', 'lost')),
@@ -382,4 +381,11 @@ export const migrate = async (): Promise<void> => {
     END $$
   `.simple();
   console.log("  ✓ raffle.raffle_access table");
+
+  // ── accepted_agb: Spalte entfernen ───────────────────────────────────────
+  // AGB-Consent erfolgt beim Cloud-Login global, Spalte wird nicht mehr gebraucht.
+  await sql`
+    ALTER TABLE raffle.registrations DROP COLUMN IF EXISTS accepted_agb
+  `.simple();
+  console.log("  ✓ raffle.registrations accepted_agb column dropped");
 };

@@ -53,7 +53,6 @@ export default function RegisterForm(props: Props) {
         body: JSON.stringify({
           name: name().trim(),
           requestedTickets: tickets(),
-          acceptedAgb: true,
           ...(groupMode() === "create" ? { createGroupName: groupName().trim() } : {}),
           ...(groupMode() === "join" ? { joinGroupCode: joinCode().trim().toUpperCase() } : {}),
         }),

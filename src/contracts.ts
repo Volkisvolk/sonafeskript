@@ -16,7 +16,6 @@ export const RegistrationSchema = z.object({
   name: z.string().describe("Vollständiger Name"),
   email: z.string().describe("E-Mail-Adresse"),
   requestedTickets: z.number().int().describe("Gewünschte Karten (1 oder 2)"),
-  acceptedAgb: z.boolean().describe("AGB akzeptiert"),
   groupId: Uuid.nullable().describe("Gruppen-UUID oder null"),
   groupName: z.string().nullable().describe("Gruppenname oder null"),
   groupInviteCode: z.string().nullable().describe("Einladungscode der Gruppe"),
@@ -41,9 +40,6 @@ export const RegisterSchema = z.object({
     .int()
     .min(1, "Mindestens 1 Karte")
     .max(2, "Maximal 2 Karten"),
-  acceptedAgb: z.boolean().refine((val) => val === true, {
-    message: "Du musst die Teilnahmebedingungen akzeptieren",
-  }),
   createGroupName: z.string().min(1).max(100).optional(),
   joinGroupCode: z.string().optional(),
 });
@@ -162,7 +158,6 @@ export const RaffleItemSchema = z.object({
   bannerUrl: z.string().nullable(),
   bannerPosition: z.string(),
   faqItems: z.array(z.object({ q: z.string(), a: z.string() })),
-  agbText: z.string().nullable(),
   regEmailSubject: z.string().nullable(),
   regEmailBody: z.string().nullable(),
 });
@@ -232,7 +227,6 @@ export const UpdateRaffleSchema = z.object({
     )
     .max(50, "Zu viele FAQ-Einträge")
     .optional(),
-  agbText: z.string().max(BODY_MAX, "Text ist zu lang").nullable().optional(),
   regEmailSubject: z.string().max(SUBJECT_MAX).nullable().optional(),
   regEmailBody: z.string().max(BODY_MAX).nullable().optional(),
 });

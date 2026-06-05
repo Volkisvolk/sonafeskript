@@ -23,7 +23,6 @@ const DEFAULT_FAQ: FaqItem[] = [
 ];
 
 interface Defaults {
-  agbText: string;
   replyToEmail: string;
   regEmailSubject: string;
   regEmailBody: string;
@@ -44,7 +43,6 @@ interface Props {
   bannerUrl: string | null;
   bannerPosition: string;
   faqItems: FaqItem[];
-  agbText: string | null;
   regEmailSubject: string | null;
   regEmailBody: string | null;
   defaults: Defaults;
@@ -136,7 +134,6 @@ export default function UserRaffleSettings(props: Props) {
   const [raffleName, setRaffleName] = createSignal(props.name);
   const [description, setDescription] = createSignal(props.description ?? "");
   const [contingent, setContingent] = createSignal(String(props.ticketContingent));
-  const [agbText, setAgbText] = createSignal(props.agbText ?? "");
 
   // ── E-Mail-Filter ──────────────────────────────────────────────────────────
   const [patterns, setPatterns] = createSignal<string[]>([...props.allowedEmailPatterns]);
@@ -321,7 +318,6 @@ export default function UserRaffleSettings(props: Props) {
           lossEmailBody: lossBody().trim() || null,
           bannerPosition: positionCss(),
           faqItems: faqItems(),
-          agbText: agbText().trim() || null,
           ...(bannerChanged() ? { bannerUrl: bannerPreview() } : {}),
         }),
       });
@@ -448,22 +444,6 @@ export default function UserRaffleSettings(props: Props) {
                   value={description()}
                   onInput={(e) => setDescription(e.currentTarget.value)}
                 />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-dimmed mb-1">
-                  Teilnahmebedingungen (AGB)
-                  <Tip text="Wird als Pflicht-Checkbox im Anmeldeformular angezeigt. Leer lassen = globaler Standardtext wird verwendet." />
-                </label>
-                <textarea
-                  class="btn-input w-full resize-y"
-                  rows={4}
-                  placeholder={props.defaults.agbText || "Leer = globaler Standardtext wird verwendet."}
-                  value={agbText()}
-                  onInput={(e) => setAgbText(e.currentTarget.value)}
-                />
-                <p class="text-xs text-dimmed mt-1">
-                  Wird als Pflicht-Checkbox im Anmeldeformular angezeigt. Links: <code class="font-mono">[Text](https://...)</code>
-                </p>
               </div>
             </div>
           </Show>
