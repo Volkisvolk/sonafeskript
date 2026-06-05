@@ -36,10 +36,6 @@ export type Registration = z.infer<typeof RegistrationSchema>;
 
 export const RegisterSchema = z.object({
   name: z.string().min(1, "Name ist erforderlich").max(200, "Name ist zu lang"),
-  email: z
-    .string()
-    .email("Bitte gib eine gültige E-Mail-Adresse ein")
-    .max(300, "E-Mail-Adresse ist zu lang"),
   requestedTickets: z
     .number()
     .int()
@@ -64,7 +60,6 @@ export const RegisterResponseSchema = z.object({
   message: z.string(),
   registrationId: z.string(),
   inviteCode: z.string().optional(),
-  requiresConfirmation: z.boolean().optional(),
 });
 
 // ── Groups ───────────────────────────────────────────────────────────────────

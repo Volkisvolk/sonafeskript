@@ -51,7 +51,7 @@ const mapRaffle = (r: DbRaffle): RaffleItem => ({
 });
 
 const toPgTextArray = (arr: string[]) =>
-  "{" + arr.map((s) => '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"').join(",") + "}";
+  "{" + arr.map((s) => '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\{/g, "\\{").replace(/\}/g, "\\}") + '"').join(",") + "}";
 
 const WITH_COUNT = sql`
   SELECT r.*, COALESCE(rc.cnt, 0)::int AS registration_count, COALESCE(rc.requested, 0)::int AS total_requested_tickets

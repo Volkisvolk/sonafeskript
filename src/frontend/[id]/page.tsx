@@ -4,11 +4,13 @@ import { Layout } from "@valentinkolb/cloud/ssr";
 import { settings } from "@valentinkolb/cloud/services";
 import { raffleService } from "@/service";
 import RegisterForm from "../RegisterForm.island";
+import MyRegistrationEdit from "../MyRegistrationEdit.island";
 import { LinkText } from "../lib/links";
 import RaffleFaq from "../RaffleFaq.island";
 
 export default ssr<AuthContext>(async (c) => {
   const id = c.req.param("id")!;
+  const user = c.get("user");
 
   const raffle = await raffleService.raffles.get(id);
 
@@ -27,15 +29,14 @@ export default ssr<AuthContext>(async (c) => {
     );
   }
 
-  const [globalAgbText, globalBannerUrl, stats] = await Promise.all([
-    settings.get<string>("raffle.agb_text"),
+  const [globalBannerUrl, stats, maxGroupSize, existingReg] = await Promise.all([
     settings.get<string>("raffle.banner_url"),
     raffleService.registrations.getStats({ raffleId: id }),
+    settings.get<number>("raffle.max_group_size").then((v) => v ?? 4),
+    user?.mail ? raffleService.registrations.getByEmail({ email: user.mail, raffleId: id }) : Promise.resolve(null),
   ]);
 
   const bannerUrl = raffle.bannerUrl || globalBannerUrl;
-  const agbText = raffle.agbText || globalAgbText || "";
-
   const remaining = Math.max(0, raffle.ticketContingent - stats.totalRequestedTickets);
   const pct = raffle.ticketContingent === 0
     ? 0
@@ -94,30 +95,86 @@ export default ssr<AuthContext>(async (c) => {
           {overbooked ? (
             <div class="info-block-info px-3 py-2 mt-2 text-xs flex items-center gap-2">
               <i class="ti ti-arrow-shuffle shrink-0" />
-              <span>Es haben sich mehr Personen angemeldet als Karten vorhanden sind — das ist normal und gewollt. Du kannst dich trotzdem anmelden! Wer eine Karte erhält, wird anschließend per Verlosung zufällig ausgewählt.</span>
+              <span>Es haben sich mehr Personen angemeldet als Karten vorhanden sind — das ist normal und gewollt. Du kannst dich trotzdem anmelden!</span>
             </div>
           ) : (
             <p class="text-xs text-dimmed mt-1 text-right">{pct}% des Kontingents</p>
           )}
         </div>
 
-        {/* ── Status-Meldung oder Formular ─────────────────────────────────── */}
+        {/* ── Formular / Status / Edit-Panel ───────────────────────────────── */}
         {raffle.status === "open" ? (
-          <RegisterForm
-            raffleId={raffle.id}
-            agbText={agbText ?? ""}
-            remaining={remaining}
-          />
+          user ? (
+            existingReg ? (
+              // Bereits angemeldet → Edit-Panel
+              <div class="paper p-4 mb-4">
+                <div class="flex items-center justify-between mb-4">
+                  <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 thumbnail flex items-center justify-center bg-emerald-100 dark:bg-emerald-900/40">
+                      <i class="ti ti-circle-check text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div>
+                      <p class="text-sm font-semibold text-primary">Du bist angemeldet</p>
+                      <p class="text-xs text-dimmed">{existingReg.requestedTickets} Karte{existingReg.requestedTickets !== 1 ? "n" : ""} angefordert</p>
+                    </div>
+                  </div>
+                  <a href="/app/raffle/registrations" class="btn-simple btn-sm text-xs">
+                    <i class="ti ti-list mr-1" />Alle Anmeldungen
+                  </a>
+                </div>
+                <MyRegistrationEdit
+                  registration={existingReg}
+                  raffleId={raffle.id}
+                  raffleName={raffle.name}
+                  raffleStatus={raffle.status}
+                  maxGroupSize={maxGroupSize}
+                />
+              </div>
+            ) : (
+              // Noch nicht angemeldet → Formular
+              <RegisterForm
+                raffleId={raffle.id}
+                remaining={remaining}
+                userEmail={user.mail ?? ""}
+                userDisplayName={user.displayName ?? ""}
+                allowedEmailPatterns={raffle.allowedEmailPatterns}
+              />
+            )
+          ) : (
+            // Nicht eingeloggt → Login-Gate
+            <div class="paper p-6 mb-4">
+              <div class="flex flex-col items-center text-center gap-4">
+                <div class="w-14 h-14 thumbnail flex items-center justify-center bg-blue-100 dark:bg-blue-900/40">
+                  <i class="ti ti-login text-3xl text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <h2 class="text-lg font-semibold text-primary">Account erforderlich</h2>
+                  <p class="text-sm text-dimmed mt-1">
+                    Um an der Verlosung teilzunehmen, musst du eingeloggt sein.
+                    Du kannst dich mit deiner E-Mail-Adresse anmelden – ein Gast-Account wird automatisch erstellt.
+                  </p>
+                </div>
+                {raffle.allowedEmailPatterns.length > 0 && (
+                  <div class="info-block-info p-3 text-xs text-left w-full">
+                    <p class="font-semibold mb-1"><i class="ti ti-at mr-1" />Nur bestimmte E-Mail-Adressen zugelassen:</p>
+                    <ul class="list-disc list-inside space-y-0.5">
+                      {raffle.allowedEmailPatterns.map((p) => <li class="font-mono">{p}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <a href={`/auth/login?redirectTo=${encodeURIComponent(`/app/raffle/${id}`)}`} class="btn-primary btn-md">
+                  <i class="ti ti-login mr-2" />Einloggen / Gast-Account erstellen
+                </a>
+              </div>
+            </div>
+          )
         ) : raffle.status === "raffled" ? (
           <div class="info-block-info p-4 mb-4">
             <div class="flex items-start gap-3">
               <i class="ti ti-clock text-xl shrink-0 mt-0.5" />
               <div>
                 <p class="font-semibold">Die Verlosung wurde durchgeführt</p>
-                <p class="text-sm mt-1">
-                  Die Gewinner wurden bereits ausgelost. Die Benachrichtigungs-Mails
-                  werden in Kürze verschickt. Bitte schau in dein E-Mail-Postfach!
-                </p>
+                <p class="text-sm mt-1">Die Gewinner wurden bereits ausgelost. Bitte schau in dein E-Mail-Postfach!</p>
               </div>
             </div>
           </div>
@@ -127,10 +184,7 @@ export default ssr<AuthContext>(async (c) => {
               <i class="ti ti-mail text-xl shrink-0 mt-0.5" />
               <div>
                 <p class="font-semibold">Benachrichtigungen wurden verschickt</p>
-                <p class="text-sm mt-1">
-                  Die Verlosung ist abgeschlossen. Alle Teilnehmer haben eine
-                  Benachrichtigungs-Mail erhalten. Überprüfe dein Postfach!
-                </p>
+                <p class="text-sm mt-1">Die Verlosung ist abgeschlossen. Überprüfe dein Postfach!</p>
               </div>
             </div>
           </div>

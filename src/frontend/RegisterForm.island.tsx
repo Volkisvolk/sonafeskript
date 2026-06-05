@@ -1,23 +1,22 @@
 import { createSignal, createResource, Show } from "solid-js";
 import { prompts } from "@valentinkolb/cloud/ui";
-import { LinkText } from "./lib/links";
 
 interface Props {
   raffleId: string;
-  agbText: string;
   remaining: number;
+  userEmail: string;
+  userDisplayName: string;
+  allowedEmailPatterns: string[];
 }
 
 export default function RegisterForm(props: Props) {
-  const [name, setName] = createSignal("");
-  const [email, setEmail] = createSignal("");
+  const [name, setName] = createSignal(props.userDisplayName);
   const [tickets, setTickets] = createSignal<1 | 2>(1);
-  const [agb, setAgb] = createSignal(false);
   const [groupMode, setGroupMode] = createSignal<"none" | "create" | "join">("none");
   const [groupName, setGroupName] = createSignal("");
   const [joinCode, setJoinCode] = createSignal("");
   const [loading, setLoading] = createSignal(false);
-  const [done, setDone] = createSignal<{ inviteCode?: string; requiresConfirmation?: boolean } | null>(null);
+  const [done, setDone] = createSignal<{ inviteCode?: string } | null>(null);
   const [error, setError] = createSignal("");
 
   // Vorschau der Gruppe beim Eintippen des Codes
@@ -41,8 +40,6 @@ export default function RegisterForm(props: Props) {
     setError("");
 
     if (!name().trim()) return setError("Bitte gib deinen Namen ein.");
-    if (!email().trim()) return setError("Bitte gib deine E-Mail-Adresse ein.");
-    if (!agb()) return setError("Du musst die Teilnahmebedingungen akzeptieren.");
     if (groupMode() === "create" && !groupName().trim())
       return setError("Bitte gib einen Gruppenname ein.");
     if (groupMode() === "join" && !joinCode().trim())
@@ -55,9 +52,8 @@ export default function RegisterForm(props: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name().trim(),
-          email: email().trim(),
           requestedTickets: tickets(),
-          acceptedAgb: agb(),
+          acceptedAgb: true,
           ...(groupMode() === "create" ? { createGroupName: groupName().trim() } : {}),
           ...(groupMode() === "join" ? { joinGroupCode: joinCode().trim().toUpperCase() } : {}),
         }),
@@ -65,11 +61,15 @@ export default function RegisterForm(props: Props) {
 
       const body = await res.json();
       if (!res.ok) {
+        if (res.status === 401) {
+          window.location.href = `/auth/login?redirectTo=${encodeURIComponent(window.location.pathname)}`;
+          return;
+        }
         setError(body.message ?? "Ein Fehler ist aufgetreten. Bitte versuche es erneut.");
         return;
       }
 
-      setDone({ inviteCode: body.inviteCode, requiresConfirmation: body.requiresConfirmation });
+      setDone({ inviteCode: body.inviteCode });
     } catch {
       setError("Verbindungsfehler. Bitte überprüfe deine Internetverbindung.");
     } finally {
@@ -83,31 +83,15 @@ export default function RegisterForm(props: Props) {
         when={!done()}
         fallback={
           <div class="flex flex-col items-center text-center gap-3 py-4">
-            <div class={`w-14 h-14 thumbnail flex items-center justify-center ${done()?.requiresConfirmation ? "bg-amber-100 dark:bg-amber-900/40" : "bg-emerald-100 dark:bg-emerald-900/40"}`}>
-              <i class={`ti text-3xl ${done()?.requiresConfirmation ? "ti-mail-forward text-amber-600 dark:text-amber-400" : "ti-circle-check text-emerald-600 dark:text-emerald-400"}`} />
+            <div class="w-14 h-14 thumbnail flex items-center justify-center bg-emerald-100 dark:bg-emerald-900/40">
+              <i class="ti ti-circle-check text-3xl text-emerald-600 dark:text-emerald-400" />
             </div>
-            <Show
-              when={done()?.requiresConfirmation}
-              fallback={
-                <div>
-                  <h2 class="text-lg font-semibold text-primary">Erfolgreich angemeldet!</h2>
-                  <p class="text-sm text-dimmed mt-1">
-                    Du erhältst nach der Verlosung eine E-Mail an <strong>{email()}</strong>.
-                  </p>
-                </div>
-              }
-            >
-              <div>
-                <h2 class="text-lg font-semibold text-primary">Fast geschafft – bitte bestätigen!</h2>
-                <p class="text-sm text-dimmed mt-1">
-                  Wir haben dir einen Bestätigungslink an <strong>{email()}</strong> geschickt.
-                  Erst nach dem Klick auf den Link zählt deine Anmeldung für die Verlosung.
-                </p>
-                <p class="text-xs text-dimmed mt-2">
-                  Keine Mail erhalten? Schau im Spam-Ordner nach oder melde dich erneut an.
-                </p>
-              </div>
-            </Show>
+            <div>
+              <h2 class="text-lg font-semibold text-primary">Erfolgreich angemeldet!</h2>
+              <p class="text-sm text-dimmed mt-1">
+                Du erhältst nach der Verlosung eine E-Mail an <strong>{props.userEmail}</strong>.
+              </p>
+            </div>
             <Show when={done()?.inviteCode}>
               <div class="info-block-info p-3 text-left w-full">
                 <p class="text-sm font-semibold mb-1">
@@ -144,10 +128,31 @@ export default function RegisterForm(props: Props) {
             Jetzt anmelden
           </h2>
 
+          {/* Eingeloggt als */}
+          <div class="info-block-info px-3 py-2 text-xs flex items-center gap-2">
+            <i class="ti ti-user-check shrink-0" />
+            <span>Eingeloggt als <strong>{props.userEmail}</strong></span>
+          </div>
+
+          {/* Erlaubte E-Mail-Adressen */}
+          {props.allowedEmailPatterns.length > 0 && (
+            <div class="info-block-info p-3 text-xs">
+              <p class="font-semibold mb-1">
+                <i class="ti ti-at mr-1" />
+                Nur bestimmte E-Mail-Adressen zugelassen:
+              </p>
+              <ul class="list-disc list-inside space-y-0.5 mb-0">
+                {props.allowedEmailPatterns.map((p) => (
+                  <li class="font-mono">{p}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Name */}
           <div>
             <label class="block text-xs font-medium text-dimmed mb-1" for="reg-name">
-              Vollständiger Name <span class="text-red-500">*</span>
+              Name für die Verlosung <span class="text-red-500">*</span>
             </label>
             <input
               id="reg-name"
@@ -159,26 +164,6 @@ export default function RegisterForm(props: Props) {
               required
               autocomplete="name"
             />
-          </div>
-
-          {/* E-Mail */}
-          <div>
-            <label class="block text-xs font-medium text-dimmed mb-1" for="reg-email">
-              E-Mail-Adresse <span class="text-red-500">*</span>
-            </label>
-            <input
-              id="reg-email"
-              type="email"
-              class="btn-input w-full"
-              placeholder="max@beispiel.de"
-              value={email()}
-              onInput={(e) => setEmail(e.currentTarget.value)}
-              required
-              autocomplete="email"
-            />
-            <p class="text-xs text-dimmed mt-1">
-              An diese Adresse erhältst du das Ergebnis der Verlosung.
-            </p>
           </div>
 
           {/* Anzahl Karten */}
@@ -279,19 +264,6 @@ export default function RegisterForm(props: Props) {
             </Show>
           </div>
 
-          {/* AGB */}
-          <div>
-            <label class="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                class="mt-0.5 shrink-0"
-                checked={agb()}
-                onChange={(e) => setAgb(e.currentTarget.checked)}
-              />
-              <LinkText text={props.agbText} class="text-xs text-dimmed leading-relaxed" />
-            </label>
-          </div>
-
           {/* Fehler */}
           <Show when={error()}>
             <div class="info-block-danger p-3 text-sm">
@@ -311,11 +283,6 @@ export default function RegisterForm(props: Props) {
               Wird angemeldet…
             </Show>
           </button>
-
-          <p class="text-xs text-dimmed text-center">
-            <i class="ti ti-shield-lock mr-1" />
-            Deine Daten werden nur für die Verlosung verwendet und danach gelöscht.
-          </p>
         </form>
       </Show>
     </div>

@@ -117,29 +117,35 @@ export const join = async (params: {
   registrationId: string;
   inviteCode: string;
   raffleId: string;
-}): Promise<MutationResult<Group>> => {
-  const group = await getByInviteCode({ code: params.inviteCode, raffleId: params.raffleId });
-  if (!group) {
-    return { ok: false, error: "Kein Gruppe mit diesem Einladungscode gefunden.", status: 404 };
-  }
-
+}): Promise<MutationResult<{ groupId: string; groupName: string }>> => {
   const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
-  if (group.memberCount >= maxGroupSize) {
-    return {
-      ok: false,
-      error: `Die Gruppe „${group.name}" ist bereits voll (max. ${maxGroupSize} Personen).`,
-      status: 400,
-    };
-  }
 
-  const result = await sql`
-    UPDATE raffle.registrations SET group_id = ${group.id}::uuid
-    WHERE id = ${params.registrationId}::uuid
-  `;
-  if (result.count === 0) return { ok: false, error: "Anmeldung nicht gefunden.", status: 404 };
+  // Atomic: lock the group row, recount members, update registration — no TOCTOU.
+  return await sql.begin(async (tx) => {
+    const [group] = await tx<{ id: string; name: string }[]>`
+      SELECT g.id, g.name FROM raffle.groups g
+      WHERE g.invite_code = ${params.inviteCode.toUpperCase()}
+        AND g.raffle_id = ${params.raffleId}::uuid
+      FOR UPDATE
+    `;
+    if (!group) return { ok: false, error: "Keine Gruppe mit diesem Einladungscode gefunden.", status: 404 };
 
-  const updated = await get({ id: group.id, raffleId: params.raffleId });
-  return { ok: true, data: updated! };
+    const [countRow] = await tx<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM raffle.registrations
+      WHERE group_id = ${group.id}::uuid AND raffle_id = ${params.raffleId}::uuid
+    `;
+    if ((countRow?.count ?? 0) >= maxGroupSize) {
+      return { ok: false, error: `Die Gruppe ist bereits voll (max. ${maxGroupSize} Personen).`, status: 400 };
+    }
+
+    const result = await tx`
+      UPDATE raffle.registrations SET group_id = ${group.id}::uuid
+      WHERE id = ${params.registrationId}::uuid
+    `;
+    if (result.count === 0) return { ok: false, error: "Anmeldung nicht gefunden.", status: 404 };
+
+    return { ok: true, data: { groupId: group.id, groupName: group.name } };
+  });
 };
 
 export const leave = async (params: { registrationId: string }): Promise<MutationResult<void>> => {

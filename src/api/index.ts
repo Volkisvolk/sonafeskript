@@ -37,7 +37,11 @@ const ExternalLinkListSchema = z.array(ExternalLinkSchema);
 const SimilarNamePairListSchema = z.array(SimilarNamePairSchema);
 const RaffleItemListSchema = z.array(RaffleItemSchema);
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (s: string) => UUID_RE.test(s);
+
 const getOwnedRaffle = async (raffleId: string, userId: string, userGroups: string[]) => {
+  if (!isUuid(raffleId)) return { ok: false as const, error: "Verlosung nicht gefunden.", status: 404 as const };
   const raffle = await raffleService.raffles.get(raffleId);
   if (!raffle) return { ok: false as const, error: "Verlosung nicht gefunden.", status: 404 as const };
   const permission = await raffleService.access.getUserPermission(raffleId, userId, userGroups);
@@ -77,6 +81,7 @@ const app = new Hono<AuthContext>()
     }),
     async (c) => {
       const id = c.req.param("id")!;
+      if (!isUuid(id)) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
       const raffle = await raffleService.raffles.get(id);
       if (!raffle) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
 
@@ -94,17 +99,26 @@ const app = new Hono<AuthContext>()
   .post(
     "/raffles/:id/register",
     describeRoute({
-      tags: ["Public"],
-      summary: "Für eine Verlosung anmelden",
+      tags: ["Auth"],
+      summary: "Für eine Verlosung anmelden (Account erforderlich)",
       responses: {
         200: jsonResponse(RegisterResponseSchema, "Erfolgreich angemeldet"),
         400: jsonResponse(ErrorResponseSchema, "Ungültige Eingabe"),
-        409: jsonResponse(ErrorResponseSchema, "E-Mail bereits registriert"),
+        401: jsonResponse(ErrorResponseSchema, "Nicht eingeloggt"),
+        409: jsonResponse(ErrorResponseSchema, "Bereits registriert"),
       },
     }),
+    auth.requireRole("authenticated"),
     v("json", RegisterSchema),
     async (c) => {
+      const user = c.get("user")!;
+      const email = user.mail;
+      if (!email) {
+        return c.json({ error: true, message: "Dein Account hat keine E-Mail-Adresse hinterlegt." }, 400);
+      }
+
       const raffleId = c.req.param("id")!;
+      if (!isUuid(raffleId)) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
       const data = c.req.valid("json");
 
       const raffle = await raffleService.raffles.get(raffleId);
@@ -117,7 +131,7 @@ const app = new Hono<AuthContext>()
       }
 
       if (raffle.allowedEmailPatterns.length > 0) {
-        const emailLower = data.email.toLowerCase();
+        const emailLower = email.toLowerCase();
         const allowed = raffle.allowedEmailPatterns.some((pattern) => {
           const p = pattern.trim().toLowerCase();
           if (p.startsWith("*@")) return emailLower.endsWith(p.slice(1));
@@ -136,7 +150,7 @@ const app = new Hono<AuthContext>()
         return c.json({ error: true, message: "Du kannst nicht gleichzeitig eine Gruppe erstellen und einer beitreten." }, 400);
       }
 
-      const emailCheck = await raffleService.registrations.checkEmailAvailable({ email: data.email, raffleId });
+      const emailCheck = await raffleService.registrations.checkEmailAvailable({ email, raffleId });
       if (!emailCheck.ok) {
         return c.json({ error: true, message: emailCheck.error }, emailCheck.status ?? 400);
       }
@@ -163,17 +177,15 @@ const app = new Hono<AuthContext>()
         groupId = group.id;
       }
 
-      const result = await raffleService.registrations.create({ data, groupId, raffleId });
+      const result = await raffleService.registrations.create({ data, email, groupId, raffleId });
       if (!result.ok) {
         return c.json({ error: true, message: result.error }, result.status ?? 400);
       }
 
-      const { registration, confirmToken, requiresConfirmation, resent } = result.data;
+      const { registration } = result.data;
       const registrationId = registration.id;
 
-      // Gruppe nur bei einer echten Neu-Anmeldung anlegen (nicht beim erneuten
-      // Versenden des Bestätigungslinks für eine bestehende, unbestätigte Anmeldung).
-      if (data.createGroupName && !resent) {
+      if (data.createGroupName && !registration.groupId) {
         const groupResult = await raffleService.groups.create({
           name: data.createGroupName,
           raffleId,
@@ -189,66 +201,32 @@ const app = new Hono<AuthContext>()
       const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const replyTo = raffle.replyToEmail ?? (await settings.get<string>("raffle.reply_to_email"));
 
-      if (requiresConfirmation && confirmToken) {
-        // ── Magic-Link-Bestätigungsmail ──────────────────────────────────────
-        const rawAppUrl = (await settings.get<string>("app.url")) ?? "";
-        const appUrl = rawAppUrl.startsWith("http") ? rawAppUrl : `https://${rawAppUrl}`;
-        const confirmUrl = `${appUrl.replace(/\/$/, "")}/app/raffle/confirm/${confirmToken}`;
-
-        await notifications
-          .send({
-            type: "email",
-            recipient: data.email,
-            subject: `Bitte bestätige deine Anmeldung für ${raffle.name}`,
-            rawHtml:
-              `<p>Hallo ${esc(data.name)},</p>` +
-              `<p>bitte bestätige deine Anmeldung für „${esc(raffle.name)}", indem du auf den folgenden Link klickst:</p>` +
-              `<p><a href="${esc(confirmUrl)}">Anmeldung jetzt bestätigen</a></p>` +
-              `<p><span>Erst nach der Bestätigung zählt deine Anmeldung für die Verlosung.</span></p>` +
-              `<p><span>Wenn du dich nicht angemeldet hast, kannst du diese E-Mail einfach ignorieren.</span></p>`,
-            ...(replyTo ? { replyTo } : {}),
-          })
-          .catch(() => {});
-
-        return c.json({
-          message: resent
-            ? `Wir haben dir einen neuen Bestätigungslink an ${data.email} geschickt. Bitte bestätige deine Anmeldung darüber.`
-            : `Fast geschafft! Wir haben dir einen Bestätigungslink an ${data.email} geschickt. Erst nach der Bestätigung zählt deine Anmeldung.`,
-          registrationId,
-          requiresConfirmation: true,
-          ...(inviteCode ? { inviteCode } : {}),
-        });
-      }
-
-      // ── Ohne Bestätigungspflicht: direkte Anmeldebestätigung ────────────────
-      {
-        const [globalRegSubject, globalRegBody] = await Promise.all([
-          settings.get<string>("raffle.reg_email_subject"),
-          settings.get<string>("raffle.reg_email_body"),
-        ]);
-        const defaultSubject = "Deine Anmeldung für {{raffle_name}}";
-        const defaultBody = "Hallo {{name}},\n\ndu hast dich erfolgreich für die Verlosung angemeldet. Du erhältst nach der Verlosung eine E-Mail mit deinem Ergebnis.\n\nViel Glück!";
-        const rawSubject = (raffle.regEmailSubject ?? globalRegSubject ?? defaultSubject)
-          .replace(/{{name}}/g, data.name)
-          .replace(/{{raffle_name}}/g, raffle.name);
-        const rawBody = (raffle.regEmailBody ?? globalRegBody ?? defaultBody)
-          .replace(/{{name}}/g, data.name)
-          .replace(/{{raffle_name}}/g, raffle.name);
-        const groupSection = inviteCode
-          ? `<p style="font-weight:600">Dein Gruppeneinladungscode:</p>` +
-            `<p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center;padding:12px 0">${esc(inviteCode)}</p>` +
-            `<p><span>Teile diesen Code mit den anderen Mitgliedern deiner Gruppe.</span></p>`
-          : "";
-        await notifications
-          .send({
-            type: "email",
-            recipient: data.email,
-            subject: rawSubject,
-            rawHtml: `<p style="white-space:pre-wrap">${esc(rawBody)}</p>${groupSection}`,
-            ...(replyTo ? { replyTo } : {}),
-          })
-          .catch(() => {});
-      }
+      const [globalRegSubject, globalRegBody] = await Promise.all([
+        settings.get<string>("raffle.reg_email_subject"),
+        settings.get<string>("raffle.reg_email_body"),
+      ]);
+      const defaultSubject = "Deine Anmeldung für {{raffle_name}}";
+      const defaultBody = "Hallo {{name}},\n\ndu hast dich erfolgreich für die Verlosung angemeldet. Du erhältst nach der Verlosung eine E-Mail mit deinem Ergebnis.\n\nViel Glück!";
+      const rawSubject = (raffle.regEmailSubject ?? globalRegSubject ?? defaultSubject)
+        .replace(/{{name}}/g, data.name)
+        .replace(/{{raffle_name}}/g, raffle.name);
+      const rawBody = (raffle.regEmailBody ?? globalRegBody ?? defaultBody)
+        .replace(/{{name}}/g, data.name)
+        .replace(/{{raffle_name}}/g, raffle.name);
+      const groupSection = inviteCode
+        ? `<p style="font-weight:600">Dein Gruppeneinladungscode:</p>` +
+          `<p style="font-size:32px;font-weight:bold;letter-spacing:6px;text-align:center;padding:12px 0">${esc(inviteCode)}</p>` +
+          `<p><span>Teile diesen Code mit den anderen Mitgliedern deiner Gruppe.</span></p>`
+        : "";
+      await notifications
+        .send({
+          type: "email",
+          recipient: email,
+          subject: rawSubject,
+          rawHtml: `<p style="white-space:pre-wrap">${esc(rawBody)}</p>${groupSection}`,
+          ...(replyTo ? { replyTo } : {}),
+        })
+        .catch(() => {});
 
       return c.json({
         message: "Erfolgreich angemeldet! Du erhältst nach der Verlosung eine E-Mail.",
@@ -386,10 +364,131 @@ const app = new Hono<AuthContext>()
   )
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // NUTZER-ENDPUNKTE (eigene Verlosungen)
+  // NUTZER-ENDPUNKTE (eigene Anmeldungen)
   // ═══════════════════════════════════════════════════════════════════════════
 
   .use("/user/*", auth.requireRole("authenticated"))
+
+  .get(
+    "/user/my-registrations",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Anmeldungen auflisten",
+      responses: { 200: jsonResponse(z.array(z.any()), "Eigene Anmeldungen") },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      if (!user.mail) return c.json([]);
+      const regs = await raffleService.registrations.listByEmail(user.mail);
+      return c.json(regs);
+    },
+  )
+
+  .patch(
+    "/user/my-registrations/:regId/tickets",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Anmeldung: Kartenanzahl ändern",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Aktualisiert"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+        403: jsonResponse(ErrorResponseSchema, "Keine Berechtigung"),
+      },
+    }),
+    v("json", z.object({ requestedTickets: z.number().int().min(1).max(2) })),
+    async (c) => {
+      const user = c.get("user")!;
+      if (!user.mail) return c.json({ error: true, message: "Kein E-Mail-Account." }, 400);
+      const regId = c.req.param("regId")!;
+      if (!isUuid(regId)) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const { requestedTickets } = c.req.valid("json");
+
+      const reg = await raffleService.registrations.get({ id: regId });
+      if (!reg || reg.email.toLowerCase() !== user.mail.toLowerCase())
+        return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+
+      const raffleForReg = await raffleService.registrations.getRaffleForRegistration(regId);
+      if (!raffleForReg || raffleForReg.status !== "open")
+        return c.json({ error: true, message: "Die Verlosung ist nicht mehr offen." }, 400);
+
+      const result = await raffleService.registrations.update({ id: regId, data: { requestedTickets } });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: "Kartenanzahl aktualisiert." });
+    },
+  )
+
+  .post(
+    "/user/my-registrations/:regId/group",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Anmeldung: Gruppe beitreten",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Beigetreten"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+      },
+    }),
+    v("json", z.object({ joinGroupCode: z.string().min(1).max(8) })),
+    async (c) => {
+      const user = c.get("user")!;
+      if (!user.mail) return c.json({ error: true, message: "Kein E-Mail-Account." }, 400);
+      const regId = c.req.param("regId")!;
+      if (!isUuid(regId)) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+      const { joinGroupCode } = c.req.valid("json");
+
+      const reg = await raffleService.registrations.get({ id: regId });
+      if (!reg || reg.email.toLowerCase() !== user.mail.toLowerCase())
+        return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+
+      const raffleForReg = await raffleService.registrations.getRaffleForRegistration(regId);
+      if (!raffleForReg || raffleForReg.status !== "open")
+        return c.json({ error: true, message: "Die Verlosung ist nicht mehr offen." }, 400);
+
+      if (reg.groupId) return c.json({ error: true, message: "Du bist bereits in einer Gruppe." }, 400);
+
+      // Atomic: group size check + update in one transaction (prevents TOCTOU race condition)
+      const result = await raffleService.groups.join({
+        registrationId: regId,
+        inviteCode: joinGroupCode,
+        raffleId: raffleForReg.id,
+      });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      return c.json({ message: `Gruppe „${result.data.groupName}" beigetreten.` });
+    },
+  )
+
+  .delete(
+    "/user/my-registrations/:regId/group",
+    describeRoute({
+      tags: ["User"],
+      summary: "Eigene Anmeldung: Gruppe verlassen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Verlassen"),
+        400: jsonResponse(ErrorResponseSchema, "Fehler"),
+      },
+    }),
+    async (c) => {
+      const user = c.get("user")!;
+      if (!user.mail) return c.json({ error: true, message: "Kein E-Mail-Account." }, 400);
+      const regId = c.req.param("regId")!;
+      if (!isUuid(regId)) return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+
+      const reg = await raffleService.registrations.get({ id: regId });
+      if (!reg || reg.email.toLowerCase() !== user.mail.toLowerCase())
+        return c.json({ error: true, message: "Anmeldung nicht gefunden." }, 404);
+
+      const raffleForReg = await raffleService.registrations.getRaffleForRegistration(regId);
+      if (!raffleForReg || raffleForReg.status !== "open")
+        return c.json({ error: true, message: "Die Verlosung ist nicht mehr offen." }, 400);
+
+      if (!reg.groupId) return c.json({ error: true, message: "Du bist in keiner Gruppe." }, 400);
+
+      const oldGroupId = reg.groupId;
+      const result = await raffleService.registrations.updateGroup({ id: regId, groupId: null });
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 400);
+      await raffleService.groups.removeIfEmpty({ id: oldGroupId });
+      return c.json({ message: "Gruppe verlassen." });
+    },
+  )
 
   .get(
     "/user/raffles",
@@ -511,7 +610,9 @@ const app = new Hono<AuthContext>()
       const access = await getOwnedRaffle(raffleId, user.id, user.memberofGroupIds);
       if (!access.ok) return c.json({ error: true, message: access.error }, access.status);
       const search = c.req.query("search")?.trim();
-      const filter = c.req.query("filter") as "won" | "lost" | "pending" | "duplicate_email" | "duplicate_name" | undefined;
+      const filterRaw = c.req.query("filter");
+      const filterValues = ["won", "lost", "pending", "duplicate_email", "duplicate_name"] as const;
+      const filter = filterValues.includes(filterRaw as any) ? (filterRaw as typeof filterValues[number]) : undefined;
       const page = Math.max(1, Number(c.req.query("page") ?? 1));
       const perPage = Math.min(100, Math.max(1, Number(c.req.query("perPage") ?? 50)));
       const result = await raffleService.registrations.listAdmin({ raffleId, search, filter, pagination: { page, perPage } });

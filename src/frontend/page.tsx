@@ -25,10 +25,14 @@ export default ssr<AuthContext>(async (c) => {
             Wähle eine Verlosung aus und melde dich an.
           </p>
           {user ? (
-            <a href="/app/raffle/my" class="btn-secondary btn-sm mt-3 inline-flex items-center gap-1">
-              <i class="ti ti-ticket" />
-              Meine Verlosungen
-            </a>
+            <div class="flex items-center justify-center gap-2 mt-3 flex-wrap">
+              <a href="/app/raffle/registrations" class="btn-primary btn-sm inline-flex items-center gap-1">
+                <i class="ti ti-ticket" />Meine Anmeldungen
+              </a>
+              <a href="/app/raffle/my" class="btn-secondary btn-sm inline-flex items-center gap-1">
+                <i class="ti ti-settings" />Meine Verlosungen
+              </a>
+            </div>
           ) : null}
         </div>
 

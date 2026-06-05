@@ -108,49 +108,23 @@ export const checkEmailAvailable = async (params: {
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
-// Sicheres Einmal-Token für den Bestätigungslink.
-const genConfirmToken = (): string => {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-};
-
 export type CreateResult = {
   registration: Registration;
-  confirmToken: string | null;
-  requiresConfirmation: boolean;
-  resent: boolean;
 };
 
 export const create = async (params: {
   data: Register;
+  email: string;
   groupId?: string;
   raffleId: string;
 }): Promise<MutationResult<CreateResult>> => {
-  const { data, groupId, raffleId } = params;
-
-  const domainOk = await isEmailDomainAllowed(data.email);
-  if (!domainOk) {
-    const allowedDomainsRaw = await settings.get<string>("raffle.allowed_domains");
-    const domains = allowedDomainsRaw
-      ?.split(",")
-      .map((d) => d.trim())
-      .filter(Boolean)
-      .join(", ");
-    return {
-      ok: false,
-      error: `Deine E-Mail-Domain ist nicht zugelassen. Erlaubte Domains: ${domains}`,
-      status: 400,
-    };
-  }
-
-  const requireConfirmation = (await settings.get<boolean>("raffle.require_email_confirmation")) ?? true;
+  const { data, email, groupId, raffleId } = params;
 
   const [existing] = await sql<{ id: string; confirmed_at: Date | null }[]>`
     SELECT id, confirmed_at FROM raffle.registrations
-    WHERE LOWER(email) = LOWER(${data.email}) AND raffle_id = ${raffleId}::uuid
+    WHERE LOWER(email) = LOWER(${email}) AND raffle_id = ${raffleId}::uuid
   `;
   if (existing) {
-    // Bereits bestätigt → echte Doppelanmeldung, ablehnen.
     if (existing.confirmed_at) {
       return {
         ok: false,
@@ -158,46 +132,18 @@ export const create = async (params: {
         status: 409,
       };
     }
-    // Noch unbestätigt → neuen Bestätigungslink erzeugen und erneut schicken,
-    // statt eine Sackgasse zu erzeugen.
-    const token = genConfirmToken();
-    await sql`UPDATE raffle.registrations SET confirm_token = ${token} WHERE id = ${existing.id}::uuid`;
+    // Unbestätigte Altanmeldung (vor Auth-Pflicht) → jetzt direkt bestätigen
+    await sql`
+      UPDATE raffle.registrations
+      SET confirmed_at = now(), name = ${data.name}, requested_tickets = ${data.requestedTickets}
+      WHERE id = ${existing.id}::uuid
+    `;
     const reg = await get({ id: existing.id });
     if (!reg) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
-    return { ok: true, data: { registration: reg, confirmToken: token, requiresConfirmation: true, resent: true } };
-  }
-
-  // ── Mail-Abuse-Schutz: Cooldown pro Zieladresse ──────────────────────────
-  // Begrenzt, wie oft eine einzelne E-Mail-Adresse (über alle Verlosungen)
-  // Bestätigungsmails auslösen kann. Schützt davor, dass ein Angreifer eine
-  // fremde Adresse über die Plattform mit Mails flutet. Pro-Verlosung-
-  // Eindeutigkeit oben verhindert Wiederholung in derselben Verlosung.
-  // Konfigurierbar über raffle.register_cooldown_seconds (0 = aus).
-  const cooldownSecs = (await settings.get<number>("raffle.register_cooldown_seconds")) ?? 15;
-  if (cooldownSecs > 0) {
-    const [recent] = await sql<{ created_at: Date }[]>`
-      SELECT created_at FROM raffle.registrations
-      WHERE LOWER(email) = LOWER(${data.email})
-        AND created_at > now() - make_interval(secs => ${cooldownSecs})
-      ORDER BY created_at DESC
-      LIMIT 1
-    `;
-    if (recent) {
-      log.warn("register.cooldown.blocked", { raffleId, emailDomain: data.email.split("@")[1] ?? "?" });
-      return {
-        ok: false,
-        error: "Zu viele Anmeldungen in kurzer Zeit. Bitte versuche es in einem Moment erneut.",
-        status: 400,
-      };
-    }
+    return { ok: true, data: { registration: reg } };
   }
 
   const maxGroupSize = (await settings.get<number>("raffle.max_group_size")) ?? 4;
-
-  // Bestätigungspflicht: Token + confirmed_at vorbereiten. Ohne Pflicht gilt
-  // die Anmeldung sofort als bestätigt.
-  const confirmToken = requireConfirmation ? genConfirmToken() : null;
-  const confirmedAt: Date | null = requireConfirmation ? null : new Date();
 
   // Status-Check, Gruppengröße-Check und INSERT in einer Transaction mit
   // Row-Locks. Die Raffle-Zeile wird mit FOR SHARE gesperrt: Damit kann
@@ -206,19 +152,13 @@ export const create = async (params: {
   let row: DbRegistration | undefined;
   try {
     const rows = await sql.begin(async (tx) => {
-      // Raffle-Zeile sperren und Status atomar prüfen
       const [raffleRow] = await tx<{ status: string }[]>`
         SELECT status FROM raffle.raffles WHERE id = ${raffleId}::uuid FOR SHARE
       `;
-      if (!raffleRow) {
-        throw Object.assign(new Error("RAFFLE_NOT_FOUND"), {});
-      }
-      if (raffleRow.status !== "open") {
-        throw Object.assign(new Error("RAFFLE_CLOSED"), {});
-      }
+      if (!raffleRow) throw Object.assign(new Error("RAFFLE_NOT_FOUND"), {});
+      if (raffleRow.status !== "open") throw Object.assign(new Error("RAFFLE_CLOSED"), {});
 
       if (groupId) {
-        // Sperrt die Gruppe-Zeile für die Dauer der Transaction
         await tx`SELECT id FROM raffle.groups WHERE id = ${groupId}::uuid FOR UPDATE`;
         const [countRow] = await tx<{ count: number }[]>`
           SELECT COUNT(*)::int AS count FROM raffle.registrations
@@ -232,9 +172,9 @@ export const create = async (params: {
       }
       return tx<DbRegistration[]>`
         INSERT INTO raffle.registrations
-          (name, email, requested_tickets, accepted_agb, group_id, raffle_id, confirm_token, confirmed_at)
+          (name, email, requested_tickets, accepted_agb, group_id, raffle_id, confirmed_at)
         VALUES
-          (${data.name}, ${data.email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid, ${confirmToken}, ${confirmedAt})
+          (${data.name}, ${email}, ${data.requestedTickets}, ${data.acceptedAgb}, ${groupId ?? null}, ${raffleId}::uuid, now())
         RETURNING
           id, name, email, requested_tickets, accepted_agb,
           group_id, NULL AS group_name, NULL AS group_invite_code,
@@ -261,16 +201,17 @@ export const create = async (params: {
         status: 400,
       };
     }
+    // Concurrent duplicate-email race: unique index fires → clean 409
+    if (e.code === "23505" || (typeof e.message === "string" && e.message.includes("idx_registrations_email_per_raffle"))) {
+      return { ok: false, error: "Diese E-Mail-Adresse ist für diese Verlosung bereits registriert.", status: 409 };
+    }
     throw e;
   }
   if (!row) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
 
   const finalRow = await get({ id: row.id });
   if (!finalRow) return { ok: false, error: "Registrierung fehlgeschlagen.", status: 500 };
-  return {
-    ok: true,
-    data: { registration: finalRow, confirmToken, requiresConfirmation: requireConfirmation, resent: false },
-  };
+  return { ok: true, data: { registration: finalRow } };
 };
 
 // ── E-Mail-Bestätigung (Magic Link) ─────────────────────────────────────────────
@@ -367,12 +308,40 @@ export const get = async (params: { id: string; raffleId?: string }): Promise<Re
   return row ? mapRegistration(row) : null;
 };
 
+export const getRaffleForRegistration = async (regId: string): Promise<{ id: string; status: string } | null> => {
+  const [row] = await sql<{ id: string; status: string }[]>`
+    SELECT ra.id, ra.status
+    FROM raffle.registrations r
+    JOIN raffle.raffles ra ON ra.id = r.raffle_id
+    WHERE r.id = ${regId}::uuid
+  `;
+  return row ?? null;
+};
+
+export const listByEmail = async (email: string): Promise<(Registration & { raffleId: string; raffleName: string; raffleStatus: string })[]> => {
+  const rows = await sql<(DbRegistration & { raffle_id_col: string; raffle_name: string; raffle_status: string })[]>`
+    SELECT ${SELECT_COLS}, r.raffle_id AS raffle_id_col, ra.name AS raffle_name, ra.status AS raffle_status
+    FROM raffle.registrations r
+    ${WITH_GROUP_SQL}
+    JOIN raffle.raffles ra ON ra.id = r.raffle_id
+    WHERE LOWER(r.email) = LOWER(${email}) AND r.confirmed_at IS NOT NULL
+    ORDER BY r.created_at DESC
+  `;
+  return rows.map((row) => ({
+    ...mapRegistration(row),
+    raffleId: row.raffle_id_col,
+    raffleName: row.raffle_name,
+    raffleStatus: row.raffle_status,
+  }));
+};
+
 export const getByEmail = async (params: { email: string; raffleId: string }): Promise<Registration | null> => {
   const [row] = await sql<DbRegistration[]>`
     SELECT ${SELECT_COLS}
     FROM raffle.registrations r
     ${WITH_GROUP_SQL}
     WHERE LOWER(r.email) = LOWER(${params.email}) AND r.raffle_id = ${params.raffleId}::uuid
+      AND r.confirmed_at IS NOT NULL
   `;
   return row ? mapRegistration(row) : null;
 };

@@ -71,7 +71,7 @@ export default function UserRaffleControls(props: Props) {
             {loading() === "run-raffle" ? <i class="ti ti-loader-2 animate-spin mr-1" /> : <i class="ti ti-shuffle mr-1" />}
             Jetzt verlosen
           </button>
-          <span class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
+          <span class="pointer-events-none absolute top-full left-1/2 z-50 mt-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
             Startet die Verlosung und bestimmt Gewinner. Mails werden noch nicht versendet – du kannst die Ergebnisse zuerst pruefen.
           </span>
         </span>
@@ -94,7 +94,7 @@ export default function UserRaffleControls(props: Props) {
               {loading() === "finalize" ? <i class="ti ti-loader-2 animate-spin mr-1" /> : <i class="ti ti-mail mr-1" />}
               Finalisieren & Mails senden
             </button>
-            <span class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
+            <span class="pointer-events-none absolute top-full left-1/2 z-50 mt-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
               Versendet alle Gewinn- und Verlier-Mails. Nicht rückgängig machbar!
             </span>
           </span>
@@ -113,7 +113,7 @@ export default function UserRaffleControls(props: Props) {
               {loading() === "reset" ? <i class="ti ti-loader-2 animate-spin mr-1" /> : <i class="ti ti-rotate mr-1" />}
               Zurücksetzen
             </button>
-            <span class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
+            <span class="pointer-events-none absolute top-full left-1/2 z-50 mt-2 -translate-x-1/2 max-w-[220px] whitespace-normal rounded bg-zinc-900 px-2 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 text-center leading-tight">
               Setzt alle Verlosungsergebnisse zurueck. Alle Anmeldungen sind wieder 'ausstehend'. Mails wurden noch nicht versendet.
             </span>
           </span>

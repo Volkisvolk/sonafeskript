@@ -29,10 +29,14 @@ export default ssr<AuthContext>(async (c) => {
             <h1 class="text-xl font-bold text-primary">Meine Verlosungen</h1>
             <p class="text-sm text-dimmed mt-0.5">Verlosungen, die du erstellt hast</p>
           </div>
-          <a href="/app/raffle" class="btn-secondary btn-sm">
-            <i class="ti ti-arrow-left mr-1" />
-            Übersicht
-          </a>
+          <div class="flex items-center gap-2">
+            <a href="/app/raffle/registrations" class="btn-secondary btn-sm">
+              <i class="ti ti-ticket mr-1" />Meine Anmeldungen
+            </a>
+            <a href="/app/raffle" class="btn-secondary btn-sm">
+              <i class="ti ti-arrow-left mr-1" />Übersicht
+            </a>
+          </div>
         </div>
 
         <div class="flex flex-col gap-3">

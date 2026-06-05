@@ -37,13 +37,6 @@ export const app = defineApp({
       description:
         'Kommagetrennte Liste erlaubter Domains (z.B. "uni.de,firma.com"). Leer lassen = alle Domains erlaubt.',
     },
-    "raffle.require_email_confirmation": {
-      kind: "boolean",
-      label: "E-Mail-Bestätigung erforderlich (Double-Opt-In)",
-      default: true,
-      description:
-        "Wenn aktiv, zählt eine Anmeldung erst, nachdem der Bestätigungslink (Magic Link) aus der E-Mail angeklickt wurde. Verhindert Anmeldungen mit fremden/erfundenen Adressen.",
-    },
     "raffle.reply_to_email": {
       kind: "string",
       label: "Reply-To E-Mail-Adresse",
@@ -77,14 +70,6 @@ export const app = defineApp({
       default:
         "Hallo {{name}},\n\nleider haben wir mehr Anmeldungen als Karten erhalten. Bei der Verlosung hattest du diesmal leider kein Glück.\n\nWir hoffen, dich beim nächsten Mal dabei zu haben!\n\nViele Grüße",
       description: "Text der Verlier-Mail. Platzhalter: {{name}} (Name).",
-    },
-    "raffle.agb_text": {
-      kind: "string",
-      label: "Verlosungs-AGB / Datenschutzhinweis",
-      default:
-        "Mit der Teilnahme erkläre ich mich damit einverstanden, dass meine Daten (Name und E-Mail-Adresse) für die Durchführung der Verlosung gespeichert und verarbeitet werden. Nach Abschluss der Veranstaltung werden die Daten gelöscht.",
-      description:
-        "Dieser Text wird auf der Anmeldeseite angezeigt und muss von Teilnehmern aktiv akzeptiert werden.",
     },
     "raffle.banner_url": {
       kind: "string",
