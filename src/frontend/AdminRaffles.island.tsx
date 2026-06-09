@@ -100,22 +100,17 @@ export default function AdminRaffles() {
                         <td class="px-3 py-2 text-center text-dimmed">{raffle.ticketContingent}</td>
                         <td class="px-3 py-2 text-center text-dimmed">{raffle.registrationCount}</td>
                         <td class="px-3 py-2">
-                          <div class="flex items-center gap-1 justify-end">
-                            <a href={`/app/raffle/my/${raffle.id}`} class="btn-secondary btn-sm">
-                              Verwalten
-                            </a>
-                            <button
-                              class="btn-danger btn-sm shrink-0"
-                              disabled={deleting() === raffle.id}
-                              onClick={() => deleteRaffle(raffle)}
-                            >
-                              {deleting() === raffle.id ? (
-                                <i class="ti ti-loader-2 animate-spin" />
-                              ) : (
-                                <i class="ti ti-trash" />
-                              )}
-                            </button>
-                          </div>
+                          <button
+                            class="btn-danger btn-sm shrink-0"
+                            disabled={deleting() === raffle.id}
+                            onClick={() => deleteRaffle(raffle)}
+                          >
+                            {deleting() === raffle.id ? (
+                              <i class="ti ti-loader-2 animate-spin" />
+                            ) : (
+                              <i class="ti ti-trash" />
+                            )}
+                          </button>
                         </td>
                       </tr>
                     )}
