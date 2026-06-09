@@ -344,6 +344,37 @@ const app = new Hono<AuthContext>()
     },
   )
 
+  // ── Admin: Alle Verlosungen ───────────────────────────────────────────────
+
+  .get(
+    "/admin/raffles",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Alle Verlosungen auflisten",
+      responses: { 200: jsonResponse(RaffleItemListSchema, "Alle Verlosungen") },
+    }),
+    async (c) => c.json(await raffleService.raffles.list()),
+  )
+
+  .delete(
+    "/admin/raffles/:raffleId",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Beliebige Verlosung löschen",
+      responses: {
+        200: jsonResponse(MessageResponseSchema, "Gelöscht"),
+        404: jsonResponse(ErrorResponseSchema, "Nicht gefunden"),
+      },
+    }),
+    async (c) => {
+      const raffleId = c.req.param("raffleId")!;
+      if (!isUuid(raffleId)) return c.json({ error: true, message: "Verlosung nicht gefunden." }, 404);
+      const result = await raffleService.raffles.remove(raffleId);
+      if (!result.ok) return c.json({ error: true, message: result.error }, result.status ?? 404);
+      return c.json({ message: "Verlosung wurde gelöscht." });
+    },
+  )
+
   // ── Admin: Aggregierte Stats ──────────────────────────────────────────────
 
   .get(
